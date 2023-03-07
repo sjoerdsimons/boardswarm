@@ -18,7 +18,9 @@ service Boardswarm {
   rpc ConsoleStreamInput (stream ConsoleInputRequest) returns (google.protobuf.Empty);
 
   rpc UploaderInfo(UploaderRequest) returns (UploaderInfoMsg);
-  rpc UploaderUpload (stream UploadRequest) returns (stream UploadProgress);
+  rpc UploaderRead (stream UploadRead) returns (stream UploadReadResult);
+  rpc UploaderWrite (stream UploadWrite) returns (stream UploadWriteResult);
+
   rpc UploaderCommit(UploaderRequest) returns (google.protobuf.Empty);
 
 }
@@ -124,6 +126,14 @@ message ActuatorModeRequest {
 
 message UploaderTarget {
   string name = 1;
+  bool readable = 2;
+  bool writable = 3;
+  bool seekable = 4;
+  /// target size in bytes if known
+  optional uint64 size = 5;
+  /// blocksize of the underlying media; For optimal performance read/write request should be done 
+  /// at that size
+  optional uint32 blocksize = 6;
 }
 
 message UploaderInfoMsg {
@@ -134,19 +144,49 @@ message UploaderRequest {
   uint64 uploader = 1;
 }
 
-message UploadRequest {
-  oneof TargetOrData {
-     UploadTarget target = 1;
-     bytes data = 2;
+message UploadReadTarget {
+  uint64 uploader = 1;
+  string target  = 2;
+}
+
+
+message UploadReadData {
+  uint64 length = 1;
+  optional uint64 offset = 2;
+}
+
+message UploadRead {
+  oneof TargetOrRequest {
+     UploadReadTarget target = 1;
+     UploadReadData read = 2;
   }
 }
 
-message UploadTarget {
-  uint64 uploader = 1;
-  string target  = 2;
-  uint64 length = 3;
+// One result per read request -> should furfill full read request unless eof is reached
+message UploadReadResult {
+  bytes data = 1;
 }
 
-message UploadProgress {
+message UploadWriteTarget {
+  uint64 uploader = 1;
+  string target  = 2;
+  // total length of what will be written for linear writes;
+  optional uint64 length = 3;
+}
+
+message UploadWriteData {
+  bytes data = 1;
+  optional uint64 offset = 2;
+}
+
+message UploadWrite {
+  oneof TargetOrData {
+     UploadWriteTarget target = 1;
+     UploadWriteData write = 2;
+  }
+}
+/// One per write result; will match write request size unless for some reason not all data could be written
+message UploadWriteResult {
   uint64 written = 1;
 }
+
