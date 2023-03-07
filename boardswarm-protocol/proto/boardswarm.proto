@@ -17,11 +17,11 @@ service Boardswarm {
   rpc ConsoleStreamOutput (ConsoleOutputRequest) returns (stream ConsoleOutput);
   rpc ConsoleStreamInput (stream ConsoleInputRequest) returns (google.protobuf.Empty);
 
-  rpc UploaderInfo(UploaderRequest) returns (UploaderInfoMsg);
-  rpc UploaderRead (stream UploadRead) returns (stream UploadReadResult);
-  rpc UploaderWrite (stream UploadWrite) returns (stream UploadWriteResult);
+  rpc VolumeInfo(VolumeRequest) returns (VolumeInfoMsg);
+  rpc VolumeRead (stream VolumeRead) returns (stream VolumeReadResult);
+  rpc VolumeWrite (stream VolumeWrite) returns (stream VolumeWriteResult);
 
-  rpc UploaderCommit(UploaderRequest) returns (google.protobuf.Empty);
+  rpc VolumeCommit(VolumeRequest) returns (google.protobuf.Empty);
 
 }
 
@@ -29,7 +29,7 @@ enum ItemType {
   ITEM_TYPE_DEVICE = 0;
   ITEM_TYPE_CONSOLE = 1;
   ITEM_TYPE_ACTUATOR = 2;
-  ITEM_TYPE_UPLOADER = 3;
+  ITEM_TYPE_VOLUME = 3;
 }
 
 message ItemTypeRequest {
@@ -73,7 +73,7 @@ message DeviceRequest {
 
 message Device {
   repeated Console consoles = 1;
-  repeated Uploader uploaders = 2;
+  repeated Volume volumes = 2;
   repeated Mode modes = 3;
   optional string current_mode = 4;
 }
@@ -83,7 +83,7 @@ message Console {
   optional uint64 id = 2;
 }
 
-message Uploader {
+message Volume {
   string name = 1;
   optional uint64 id = 2;
 }
@@ -124,7 +124,7 @@ message ActuatorModeRequest {
   google.protobuf.Struct parameters = 2;
 }
 
-message UploaderTarget {
+message VolumeTarget {
   string name = 1;
   bool readable = 2;
   bool writable = 3;
@@ -136,57 +136,56 @@ message UploaderTarget {
   optional uint32 blocksize = 6;
 }
 
-message UploaderInfoMsg {
-   repeated UploaderTarget target = 1;
+message VolumeInfoMsg {
+   repeated VolumeTarget target = 1;
 }
 
-message UploaderRequest {
-  uint64 uploader = 1;
+message VolumeRequest {
+  uint64 volume = 1;
 }
 
-message UploadReadTarget {
-  uint64 uploader = 1;
+message VolumeReadTarget {
+  uint64 volume = 1;
   string target  = 2;
 }
 
 
-message UploadReadData {
+message VolumeReadData {
   uint64 length = 1;
   optional uint64 offset = 2;
 }
 
-message UploadRead {
+message VolumeRead {
   oneof TargetOrRequest {
-     UploadReadTarget target = 1;
-     UploadReadData read = 2;
+     VolumeReadTarget target = 1;
+     VolumeReadData read = 2;
   }
 }
 
 // One result per read request -> should furfill full read request unless eof is reached
-message UploadReadResult {
+message VolumeReadResult {
   bytes data = 1;
 }
 
-message UploadWriteTarget {
-  uint64 uploader = 1;
+message VolumeWriteTarget {
+  uint64 volume = 1;
   string target  = 2;
   // total length of what will be written for linear writes;
   optional uint64 length = 3;
 }
 
-message UploadWriteData {
+message VolumeWriteData {
   bytes data = 1;
   optional uint64 offset = 2;
 }
 
-message UploadWrite {
+message VolumeWrite {
   oneof TargetOrData {
-     UploadWriteTarget target = 1;
-     UploadWriteData write = 2;
+     VolumeWriteTarget target = 1;
+     VolumeWriteData write = 2;
   }
 }
 /// One per write result; will match write request size unless for some reason not all data could be written
-message UploadWriteResult {
+message VolumeWriteResult {
   uint64 written = 1;
 }
-
