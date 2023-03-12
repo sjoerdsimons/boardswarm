@@ -1,0 +1,192 @@
+syntax = "proto3";
+import "google/protobuf/empty.proto";
+import "google/protobuf/struct.proto";
+package boardswarm;
+
+service Boardswarm {
+  rpc List(ItemTypeRequest) returns (ItemList);
+  rpc Monitor(ItemTypeRequest) returns (stream ItemEvent);
+  rpc ItemProperties(ItemPropertiesRequest) returns (ItemPropertiesMsg);
+
+  rpc DeviceInfo (DeviceRequest) returns (stream Device);
+  rpc DeviceChangeMode(DeviceModeRequest) returns (google.protobuf.Empty);
+
+  rpc ActuatorChangeMode(ActuatorModeRequest) returns (google.protobuf.Empty);
+
+  rpc ConsoleConfigure (ConsoleConfigureRequest) returns (google.protobuf.Empty);
+  rpc ConsoleStreamOutput (ConsoleOutputRequest) returns (stream ConsoleOutput);
+  rpc ConsoleStreamInput (stream ConsoleInputRequest) returns (google.protobuf.Empty);
+
+  rpc UploaderInfo(UploaderRequest) returns (UploaderInfoMsg);
+  rpc UploaderRead (stream UploadRead) returns (stream UploadReadResult);
+  rpc UploaderWrite (stream UploadWrite) returns (stream UploadWriteResult);
+
+  rpc UploaderCommit(UploaderRequest) returns (google.protobuf.Empty);
+
+}
+
+enum ItemType {
+  ITEM_TYPE_DEVICE = 0;
+  ITEM_TYPE_CONSOLE = 1;
+  ITEM_TYPE_ACTUATOR = 2;
+  ITEM_TYPE_UPLOADER = 3;
+}
+
+message ItemTypeRequest {
+  ItemType type = 1;
+}
+
+message Item {
+  uint64 id = 1;
+  string name = 2;
+  optional string instance = 3;
+}
+
+message ItemList {
+  repeated Item item = 1;
+}
+
+message ItemEvent {
+   oneof event {
+     ItemList add = 1;
+     uint64 remove = 2;
+   }
+}
+
+message ItemPropertiesRequest {
+  ItemType type = 1;
+  uint64 item = 2;
+}
+
+message Property {
+  string key = 1;
+  string value = 2;
+}
+
+message ItemPropertiesMsg {
+   repeated Property property = 1;
+}
+
+message DeviceRequest {
+  uint64 device = 1;
+}
+
+message Device {
+  repeated Console consoles = 1;
+  repeated Uploader uploaders = 2;
+  repeated Mode modes = 3;
+  optional string current_mode = 4;
+}
+
+message Console {
+  string name = 1;
+  optional uint64 id = 2;
+}
+
+message Uploader {
+  string name = 1;
+  optional uint64 id = 2;
+}
+
+message Mode {
+  string name = 1;
+  optional string depends = 2;
+  bool available = 3;
+}
+
+message DeviceModeRequest {
+  uint64 device = 1;
+  string mode = 2;
+}
+
+message ConsoleConfigureRequest {
+  uint64 console = 1;
+  google.protobuf.Struct parameters = 2;
+}
+
+message ConsoleInputRequest {
+  oneof TargetOrData {
+    uint64 console = 1;
+    bytes data = 2;
+  }
+}
+
+message ConsoleOutputRequest {
+   uint64 console = 1;
+}
+
+message ConsoleOutput {
+   bytes data = 1;
+}
+
+message ActuatorModeRequest {
+  uint64 actuator = 1;
+  google.protobuf.Struct parameters = 2;
+}
+
+message UploaderTarget {
+  string name = 1;
+  bool readable = 2;
+  bool writable = 3;
+  bool seekable = 4;
+  /// target size in bytes if known
+  optional uint64 size = 5;
+  /// blocksize of the underlying media; For optimal performance read/write request should be done 
+  /// at that size
+  optional uint32 blocksize = 6;
+}
+
+message UploaderInfoMsg {
+   repeated UploaderTarget target = 1;
+}
+
+message UploaderRequest {
+  uint64 uploader = 1;
+}
+
+message UploadReadTarget {
+  uint64 uploader = 1;
+  string target  = 2;
+}
+
+
+message UploadReadData {
+  uint64 length = 1;
+  optional uint64 offset = 2;
+}
+
+message UploadRead {
+  oneof TargetOrRequest {
+     UploadReadTarget target = 1;
+     UploadReadData read = 2;
+  }
+}
+
+// One result per read request -> should furfill full read request unless eof is reached
+message UploadReadResult {
+  bytes data = 1;
+}
+
+message UploadWriteTarget {
+  uint64 uploader = 1;
+  string target  = 2;
+  // total length of what will be written for linear writes;
+  optional uint64 length = 3;
+}
+
+message UploadWriteData {
+  bytes data = 1;
+  optional uint64 offset = 2;
+}
+
+message UploadWrite {
+  oneof TargetOrData {
+     UploadWriteTarget target = 1;
+     UploadWriteData write = 2;
+  }
+}
+/// One per write result; will match write request size unless for some reason not all data could be written
+message UploadWriteResult {
+  uint64 written = 1;
+}
+
