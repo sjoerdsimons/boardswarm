@@ -1,0 +1,76 @@
+---
+name: Create binaries for distribution
+on:
+  push:
+    branches-ignore:
+      - "gh-readonly-queue/**"
+  pull_request:
+  merge_group:
+jobs:
+  build-binaries:
+    runs-on: ubuntu-latest
+    container:
+      image: rust:slim-bookworm
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture:
+          - debian: "amd64"
+            rust: "x86_64-unknown-linux-gnu"
+            env:
+              NOOP: 1
+          - debian: "arm64"
+            rust: "aarch64-unknown-linux-gnu"
+            packages: "gcc-aarch64-linux-gnu"
+            env:
+              CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+              PKG_CONFIG_PATH_aarch64_unknown_linux_gnu: /usr/lib/aarch64-linux-gnu/pkgconfig
+              PKG_CONFIG_ALLOW_CROSS: 1
+    env:
+      OUTDIR: boardswarm-${{matrix.architecture.debian}}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cat ${GITHUB_ENV}
+      - run: |
+          dpkg --add-architecture ${{matrix.architecture.debian}}
+          apt update
+          apt install -y \
+            pkgconf \
+            protobuf-compiler \
+            libudev-dev libudev-dev:${{matrix.architecture.debian}} \
+            libssl-dev libssl-dev:${{matrix.architecture.debian}} \
+            ${{matrix.architecture.packages}} ""
+      - run: rustup target add ${{matrix.architecture.rust}}
+      - env: ${{matrix.architecture.env}}
+        run: cargo build --release --target ${{matrix.architecture.rust}}
+      - name: Prepare tarball
+        run: |
+          mkdir -v ${OUTDIR}
+          cp -v target/*/release/boardswarm ${OUTDIR}
+          cp -v target/*/release/boardswarm-cli ${OUTDIR}
+          tar cvzf ${OUTDIR}.tar.gz ${OUTDIR}
+      - name: Upload release binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{env.OUTDIR}}
+          path: ${{env.OUTDIR}}.tar.gz
+  publish:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: [build-binaries]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all workflow run artifacts
+        uses: actions/download-artifact@v4
+      - run: find
+      - run: |
+          gh release delete latest --yes || true
+          git push origin :latest || true
+      - run: >
+          gh release create latest
+          --prerelease
+          --generate-notes
+          --notes-file .github/workflows/dist-notes.md
+          --target $GITHUB_SHA boardswarm-*/*.tar.gz
