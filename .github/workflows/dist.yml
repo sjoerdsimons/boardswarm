@@ -37,8 +37,8 @@ jobs:
           apt install -y \
             pkgconf \
             protobuf-compiler \
-            libudev-dev libudev-dev:${{matrix.architecture.debian}} \
-            libssl-dev libssl-dev:${{matrix.architecture.debian}} \
+            libudev-dev:${{matrix.architecture.debian}} \
+            libssl-dev:${{matrix.architecture.debian}} \
             ${{matrix.architecture.packages}} ""
       - run: rustup target add ${{matrix.architecture.rust}}
       - env: ${{matrix.architecture.env}}
