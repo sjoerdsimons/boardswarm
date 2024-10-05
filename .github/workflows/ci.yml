@@ -96,7 +96,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}/${{ matrix.binary }}${{ github.ref != 'refs/heads/main' && '-ci' }}
+          images: ghcr.io/${{ github.repository }}/${{ matrix.binary }}${{ github.ref != 'refs/heads/main' && '-ci' || '' }}
           tags: |
             "type=ref,event=branch"
             "type=ref,suffix=-{{sha}},event=branch"
