@@ -55,7 +55,7 @@ jobs:
           name: ${{env.OUTDIR}}
           path: ${{env.OUTDIR}}.tar.gz
   publish:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dist' }}
     needs: [build-binaries]
     runs-on: ubuntu-latest
     env:
