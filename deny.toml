@@ -15,7 +15,8 @@ allow = [
     "Apache-2.0",
     "BSD-3-Clause",
     "MPL-2.0",
-    "ISC"
+    "ISC",
+    "Zlib"
 ]
 confidence-threshold = 0.8
 exceptions = [
@@ -39,7 +40,8 @@ external-default-features = "allow"
 allow = [ ]
 deny = [
   { crate = "webpki-roots", reason = "Should only use native certs" },
-  { crate = "aws-lc-rs", reason = "rustls#1877 - multiple rustls backend can cause panics" }
+  { crate = "aws-lc-rs", reason = "rustls#1877 - multiple rustls backend can cause panics" },
+  { crate = "openssl", reason = "Avoid multiple tls implementations" }
 ]
 
 [sources]

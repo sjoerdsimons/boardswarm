@@ -15,7 +15,7 @@ bytes = "1.4.0"
 clap = { version = "4.5", features = ["derive"] }
 futures = "0.3.25"
 humantime-serde = "1.1.1"
-pdudaemon-client = "0.1.1"
+pdudaemon-client = { version = "0.1.2", default-features=false }
 boardswarm-protocol = { version = "0.0.1", path = "../boardswarm-protocol" }
 serde = { version = "1.0.194", features = ["derive"] }
 serde_yaml = "0.9.25"
