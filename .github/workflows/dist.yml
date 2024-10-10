@@ -38,7 +38,7 @@ jobs:
             pkgconf \
             protobuf-compiler \
             libudev-dev:${{matrix.architecture.debian}} \
-            libusb-dev:${{matrix.architecture.debian}} \
+            libusb-1.0-0-dev:${{matrix.architecture.debian}} \
             libssl-dev:${{matrix.architecture.debian}} \
             ${{matrix.architecture.packages}} ""
       - run: rustup target add ${{matrix.architecture.rust}}
