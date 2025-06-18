@@ -1,21 +1,22 @@
 use std::{
     collections::{HashMap, VecDeque},
     ffi::OsStr,
-    marker::PhantomData,
     path::{Path, PathBuf},
     pin::Pin,
     sync::{Arc, Mutex},
     task::Poll,
 };
 
-use crate::{registry::Properties, Server, VolumeId};
+use crate::{registry::Properties, ActuatorId, ConsoleId, Server, VolumeId};
 use futures::{ready, Stream};
 use tokio_udev::{AsyncMonitorSocket, Enumerator};
 use tracing::{info, warn};
 
-trait Registrations<IT> {
-    fn register(&self, properties: Properties, item: IT) -> VolumeId;
-    fn unregister(&self, id: VolumeId);
+#[derive(Debug, Clone, Copy)]
+enum Registration {
+    Volume(VolumeId),
+    Actuator(ActuatorId),
+    Console(ConsoleId),
 }
 
 #[derive(Debug)]
@@ -23,50 +24,35 @@ enum RegistrationState {
     /// Pending registration for a given udev sequence number
     Pending(u64),
     /// Registered with volume id
-    Registered(VolumeId),
+    Registered(Vec<Registration>),
 }
 
-pub struct DeviceRegistrations<IT> {
+#[derive(Clone)]
+pub struct DeviceRegistrations {
     server: Server,
     registrations: Arc<Mutex<HashMap<PathBuf, RegistrationState>>>,
-    marker: PhantomData<IT>,
 }
 
-impl<IT> Clone for DeviceRegistrations<IT> {
-    fn clone(&self) -> Self {
-        Self {
-            server: self.server.clone(),
-            registrations: self.registrations.clone(),
-            marker: PhantomData,
-        }
-    }
-}
-
-#[allow(private_bounds)]
-impl<IT> DeviceRegistrations<IT>
-where
-    DeviceRegistrations<IT>: Registrations<IT>,
-{
+impl DeviceRegistrations {
     pub fn new(server: Server) -> Self {
         DeviceRegistrations {
             server,
             registrations: Default::default(),
-            marker: PhantomData,
         }
     }
 
     /// Mark a device as being a prepared for final registration. This ensures on the iteration
     /// with the given sequence number can get registered, avoiding races where a device disappears
     /// and re-appears while the preperation process is ongoing
-    pub fn pre_register(&self, device: &Device, seqnum: u64) -> PreRegistration<IT> {
+    pub fn pre_register(&self, device: &Device, seqnum: u64) -> PreRegistration {
         let mut registrations = self.registrations.lock().unwrap();
         let syspath = device.syspath().to_path_buf();
         if let Some(existing) =
             registrations.insert(syspath.clone(), RegistrationState::Pending(seqnum))
         {
             warn!("Pre-registering with known previous item: {:?}", existing);
-            if let RegistrationState::Registered(id) = existing {
-                self.unregister(id);
+            if let RegistrationState::Registered(registrations) = existing {
+                self.unregister(&registrations);
             }
         }
         PreRegistration {
@@ -78,58 +64,112 @@ where
 
     pub fn remove(&self, device: &Device) {
         let mut registrations = self.registrations.lock().unwrap();
-        if let Some(RegistrationState::Registered(id)) = registrations.remove(device.syspath()) {
-            self.unregister(id);
+        if let Some(RegistrationState::Registered(registrations)) =
+            registrations.remove(device.syspath())
+        {
+            self.unregister(&registrations);
+        }
+    }
+
+    fn unregister(&self, registrations: &[Registration]) {
+        for r in registrations {
+            match r {
+                Registration::Volume(id) => self.server.unregister_volume(*id),
+                Registration::Actuator(id) => self.server.unregister_actuator(*id),
+                Registration::Console(id) => self.server.unregister_console(*id),
+            }
         }
     }
 }
 
-impl<IT> Registrations<IT> for DeviceRegistrations<IT>
-where
-    IT: crate::Volume + 'static,
-{
-    fn register(&self, properties: Properties, item: IT) -> VolumeId {
-        self.server.register_volume(properties, item)
+pub struct RegistrationGuard<'a> {
+    server: &'a Server,
+    registrations: Vec<Registration>,
+}
+
+impl RegistrationGuard<'_> {
+    pub fn register_actuator<A>(&mut self, properties: Properties, item: A)
+    where
+        A: crate::Actuator + 'static,
+    {
+        let id = self.server.register_actuator(properties, item);
+        self.registrations.push(Registration::Actuator(id));
     }
 
-    fn unregister(&self, id: VolumeId) {
-        self.server.unregister_volume(id);
+    pub fn register_console<C>(&mut self, properties: Properties, item: C)
+    where
+        C: crate::Console + 'static,
+    {
+        let id = self.server.register_console(properties, item);
+        self.registrations.push(Registration::Console(id));
+    }
+
+    pub fn register_volume<V>(&mut self, properties: Properties, item: V)
+    where
+        V: crate::Volume + 'static,
+    {
+        let id = self.server.register_volume(properties, item);
+        self.registrations.push(Registration::Volume(id));
     }
 }
 
-#[allow(private_bounds)]
-pub struct PreRegistration<IT>
-where
-    DeviceRegistrations<IT>: Registrations<IT>,
-{
+pub struct PreRegistration {
     syspath: PathBuf,
     seqnum: u64,
-    pending: DeviceRegistrations<IT>,
+    pending: DeviceRegistrations,
 }
 
-#[allow(private_bounds)]
-impl<IT> PreRegistration<IT>
-where
-    DeviceRegistrations<IT>: Registrations<IT>,
-{
-    pub fn register(self, properties: Properties, item: IT) {
+impl PreRegistration {
+    pub fn register_batch<F>(self, r: F)
+    where
+        F: FnOnce(&mut RegistrationGuard),
+    {
         let mut registrations = self.pending.registrations.lock().unwrap();
         match registrations.get(&self.syspath) {
             Some(RegistrationState::Pending(s)) if *s == self.seqnum => {
-                let id = self.pending.register(properties, item);
-                registrations.insert(self.syspath.clone(), RegistrationState::Registered(id));
+                let mut guard = RegistrationGuard {
+                    server: &self.pending.server,
+                    registrations: vec![],
+                };
+
+                r(&mut guard);
+
+                registrations.insert(
+                    self.syspath.clone(),
+                    RegistrationState::Registered(guard.registrations),
+                );
             }
             _ => {
                 info!("Ignoring outdated registration (seqnum: {})", self.seqnum)
             }
         }
     }
+
+    #[allow(dead_code)]
+    pub fn register_actuator<A>(self, properties: Properties, item: A)
+    where
+        A: crate::Actuator + 'static,
+    {
+        self.register_batch(|r| r.register_actuator(properties, item));
+    }
+
+    #[allow(dead_code)]
+    pub fn register_console<C>(self, properties: Properties, item: C)
+    where
+        C: crate::Console + 'static,
+    {
+        self.register_batch(|r| r.register_console(properties, item));
+    }
+
+    pub fn register_volume<V>(self, properties: Properties, item: V)
+    where
+        V: crate::Volume + 'static,
+    {
+        self.register_batch(|r| r.register_volume(properties, item));
+    }
 }
 
-impl<IT> Drop for PreRegistration<IT>
-where
-    DeviceRegistrations<IT>: Registrations<IT>,
-{
+impl Drop for PreRegistration {
     fn drop(&mut self) {
         let mut registrations = self.pending.registrations.lock().unwrap();
         match registrations.get(&self.syspath) {

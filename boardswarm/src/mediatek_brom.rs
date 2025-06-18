@@ -18,7 +18,7 @@ pub const TARGET: &str = "brom";
 
 pub struct MediatekBromProvider {
     name: String,
-    registrations: DeviceRegistrations<MediatekBromVolume>,
+    registrations: DeviceRegistrations,
 }
 
 impl MediatekBromProvider {
@@ -63,11 +63,7 @@ impl SerialProvider for MediatekBromProvider {
 }
 
 #[instrument(skip(r, properties))]
-async fn setup_volume(
-    r: PreRegistration<MediatekBromVolume>,
-    node: PathBuf,
-    mut properties: Properties,
-) {
+async fn setup_volume(r: PreRegistration, node: PathBuf, mut properties: Properties) {
     info!("Setting up brom volume for {}", node.display());
     let mut port = match tokio_serial::new(node.to_string_lossy(), 115200).open_native_async() {
         Ok(port) => port,
@@ -102,9 +98,7 @@ async fn setup_volume(
         format!("{}", hwcode.version),
     );
 
-    let volume = MediatekBromVolume::new(port, brom);
-
-    r.register(properties, volume);
+    r.register_volume(properties, MediatekBromVolume::new(port, brom));
 }
 
 enum BromCommand {

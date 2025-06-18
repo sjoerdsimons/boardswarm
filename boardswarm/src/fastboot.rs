@@ -128,7 +128,7 @@ fn fastboot_volume_target<S: Into<String>>(target: S, size: Option<u64>) -> Volu
 
 #[instrument(skip(r, properties))]
 async fn setup_volume(
-    r: PreRegistration<FastbootVolume>,
+    r: PreRegistration,
     busnum: u8,
     devnum: u8,
     known_targets: Vec<String>,
@@ -187,8 +187,10 @@ async fn setup_volume(
         }
     }
 
-    let volume = FastbootVolume::new(device, max_download, targets);
-    r.register(properties, volume);
+    r.register_volume(
+        properties,
+        FastbootVolume::new(device, max_download, targets),
+    );
     Ok(())
 }
 
