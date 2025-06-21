@@ -12,7 +12,7 @@ use futures::prelude::*;
 use futures::stream::BoxStream;
 use futures::Sink;
 use mediatek_brom::MediatekBromProvider;
-use registry::{Properties, Registry};
+use registry::{Properties, Registry, RegistryIndex};
 use std::net::{AddrParseError, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -426,18 +426,22 @@ trait Device: Send + Sync {
 struct ServerInner {
     config_dir: PathBuf,
     auth_info: Vec<config::Authentication>,
-    devices: Registry<Arc<dyn Device>>,
-    consoles: Registry<Arc<dyn Console>>,
-    actuators: Registry<Arc<dyn Actuator>>,
-    volumes: Registry<Arc<dyn Volume>>,
+    devices: Registry<u64, Arc<dyn Device>>,
+    consoles: Registry<u64, Arc<dyn Console>>,
+    actuators: Registry<u64, Arc<dyn Actuator>>,
+    volumes: Registry<u64, Arc<dyn Volume>>,
 }
 
-fn to_item_list<T: Clone>(registry: &Registry<T>) -> ItemList {
+fn to_item_list<I, T>(registry: &Registry<I, T>) -> ItemList
+where
+    I: RegistryIndex + Into<u64>,
+    T: Clone,
+{
     let item = registry
         .contents()
         .into_iter()
         .map(|(id, item)| boardswarm_protocol::Item {
-            id,
+            id: id.into(),
             name: item.properties().name().to_string(),
             instance: item.properties().instance().map(ToOwned::to_owned),
         })
@@ -639,8 +643,9 @@ impl boardswarm_protocol::boardswarm_server::Boardswarm for Server {
             .try_into()
             .map_err(|_e| tonic::Status::invalid_argument("Unknown item type "))?;
 
-        fn to_item_stream<T>(registry: &Registry<T>) -> ItemMonitorStream
+        fn to_item_stream<I, T>(registry: &Registry<I, T>) -> ItemMonitorStream
         where
+            I: RegistryIndex + Into<u64> + Send + 'static,
             T: Clone + Send + 'static,
         {
             let monitor = registry.monitor();
@@ -655,7 +660,7 @@ impl boardswarm_protocol::boardswarm_server::Boardswarm for Server {
                             Ok(ItemEvent {
                                 event: Some(Event::Add(ItemList {
                                     item: vec![boardswarm_protocol::Item {
-                                        id,
+                                        id: id.into(),
                                         name: item.name().to_string(),
                                         instance: item
                                             .properties()
@@ -668,7 +673,7 @@ impl boardswarm_protocol::boardswarm_server::Boardswarm for Server {
                         )),
                         registry::RegistryChange::Removed(removed) => Some((
                             Ok(boardswarm_protocol::ItemEvent {
-                                event: Some(Event::Remove(removed)),
+                                event: Some(Event::Remove(removed.into())),
                             }),
                             monitor,
                         )),

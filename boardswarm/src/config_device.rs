@@ -33,7 +33,7 @@ impl DeviceNotifier {
 struct DeviceMode {
     name: String,
     depends: Option<String>,
-    sequence: Vec<DeviceItem<crate::config::ModeStep>>,
+    sequence: Vec<DeviceItem<u64, crate::config::ModeStep>>,
 }
 
 impl From<crate::config::Mode> for DeviceMode {
@@ -47,14 +47,15 @@ impl From<crate::config::Mode> for DeviceMode {
     }
 }
 
-struct DeviceItem<C> {
+struct DeviceItem<I, C> {
+    id: Mutex<Option<I>>,
     config: C,
-    id: Mutex<Option<u64>>,
 }
 
-impl<C> DeviceItem<C>
+impl<C, I> DeviceItem<I, C>
 where
     C: DeviceConfigItem,
+    I: Copy + Eq,
 {
     fn new(config: C) -> Self {
         Self {
@@ -67,15 +68,18 @@ where
         &self.config
     }
 
-    fn set(&self, id: Option<u64>) {
+    fn set(&self, id: Option<I>) {
         *self.id.lock().unwrap() = id;
     }
 
-    fn get(&self) -> Option<u64> {
+    fn get(&self) -> Option<I> {
         *self.id.lock().unwrap()
     }
 
-    fn unset_if_matches(&self, id: u64) -> bool {
+    fn unset_if_matches(&self, id: I) -> bool
+    where
+        I: Eq,
+    {
         let mut i = self.id.lock().unwrap();
         match *i {
             Some(item_id) if item_id == id => {
@@ -86,7 +90,10 @@ where
         }
     }
 
-    fn set_if_matches(&self, id: u64, properties: &Properties) -> bool {
+    fn set_if_matches(&self, id: I, properties: &Properties) -> bool
+    where
+        I: Eq,
+    {
         if self.config.matches(properties) {
             self.set(Some(id));
             true
@@ -100,8 +107,8 @@ struct DeviceInner {
     notifier: DeviceNotifier,
     name: String,
     current_mode: std::sync::Mutex<Option<String>>,
-    consoles: Vec<DeviceItem<crate::config::Console>>,
-    volumes: Vec<DeviceItem<crate::config::Volume>>,
+    consoles: Vec<DeviceItem<u64, crate::config::Console>>,
+    volumes: Vec<DeviceItem<u64, crate::config::Volume>>,
     modes: Vec<DeviceMode>,
     server: Server,
 }
@@ -143,11 +150,17 @@ impl Device {
     }
 
     async fn monitor_items(&self) {
-        fn add_item_with<'a, C, I, F, IT>(items: I, id: u64, item: registry::Item<IT>, f: F) -> bool
+        fn add_item_with<'a, C, F, I, IT, T>(
+            items: IT,
+            id: I,
+            item: registry::Item<T>,
+            f: F,
+        ) -> bool
         where
             C: DeviceConfigItem + 'a,
-            I: Iterator<Item = &'a DeviceItem<C>>,
-            F: Fn(&DeviceItem<C>, &IT),
+            I: Copy + Eq + 'static,
+            IT: Iterator<Item = &'a DeviceItem<I, C>>,
+            F: Fn(&DeviceItem<I, C>, &T),
         {
             items.fold(false, |changed, i| {
                 if i.set_if_matches(id, &item.properties()) {
@@ -159,19 +172,21 @@ impl Device {
             })
         }
 
-        fn add_item<'a, T, C, I>(items: I, id: u64, item: registry::Item<T>) -> bool
+        fn add_item<'a, C, I, IT, T>(items: IT, id: I, item: registry::Item<T>) -> bool
         where
             C: DeviceConfigItem + 'a,
-            I: Iterator<Item = &'a DeviceItem<C>>,
+            I: Copy + Eq + 'static,
+            IT: Iterator<Item = &'a DeviceItem<I, C>>,
         {
             add_item_with(items, id, item, |_, _| {})
         }
 
-        fn change_with<'a, T, C, I, F>(items: I, change: RegistryChange<T>, f: F) -> bool
+        fn change_with<'a, C, F, I, IT, T>(items: IT, change: RegistryChange<I, T>, f: F) -> bool
         where
             C: DeviceConfigItem + 'a,
-            I: Iterator<Item = &'a DeviceItem<C>>,
-            F: Fn(&DeviceItem<C>, &T),
+            I: Copy + Eq + 'static,
+            IT: Iterator<Item = &'a DeviceItem<I, C>>,
+            F: Fn(&DeviceItem<I, C>, &T),
         {
             match change {
                 registry::RegistryChange::Added { id, item } => add_item_with(items, id, item, f),
@@ -180,13 +195,20 @@ impl Device {
                 }
             }
         }
-        fn change<'a, T, C: DeviceConfigItem + 'a, I: Iterator<Item = &'a DeviceItem<C>>>(
-            items: I,
-            change: RegistryChange<T>,
-        ) -> bool {
+
+        fn change<'a, C, I, IT, T>(items: IT, change: RegistryChange<I, T>) -> bool
+        where
+            C: DeviceConfigItem + 'a,
+            I: Copy + Eq + 'static,
+            IT: Iterator<Item = &'a DeviceItem<I, C>>,
+        {
             change_with(items, change, |_, _| {})
         }
-        fn setup_console(dev: &DeviceItem<crate::config::Console>, console: &Arc<dyn Console>) {
+
+        fn setup_console<I>(dev: &DeviceItem<I, crate::config::Console>, console: &Arc<dyn Console>)
+        where
+            I: Copy + Eq,
+        {
             if let Err(e) = console.configure(Box::new(<dyn erased_serde::Deserializer>::erase(
                 dev.config().parameters.clone(),
             ))) {
