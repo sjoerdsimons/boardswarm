@@ -13,6 +13,7 @@ use futures::stream::BoxStream;
 use futures::Sink;
 use mediatek_brom::MediatekBromProvider;
 use registry::{Properties, Registry, RegistryIndex};
+use std::fmt::Display;
 use std::net::{AddrParseError, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -338,7 +339,7 @@ impl From<&dyn Device> for boardswarm_protocol::Device {
             .into_iter()
             .map(|c| boardswarm_protocol::Console {
                 name: c.name,
-                id: c.id,
+                id: c.id.map(|i| i.0),
             })
             .collect();
         let volumes = d
@@ -346,7 +347,7 @@ impl From<&dyn Device> for boardswarm_protocol::Device {
             .into_iter()
             .map(|v| boardswarm_protocol::Volume {
                 name: v.name,
-                id: v.id,
+                id: v.id.map(|i| i.0),
             })
             .collect();
         let modes = d
@@ -399,12 +400,12 @@ impl DeviceMonitor {
 
 struct DeviceConsole {
     name: String,
-    id: Option<u64>,
+    id: Option<ConsoleId>,
 }
 
 struct DeviceVolume {
     name: String,
-    id: Option<u64>,
+    id: Option<VolumeId>,
 }
 
 struct DeviceMode {
@@ -423,13 +424,97 @@ trait Device: Send + Sync {
     fn current_mode(&self) -> Option<String>;
 }
 
+#[derive(Copy, Clone, Debug, Default, Hash, PartialOrd, Ord, PartialEq, Eq)]
+pub struct ActuatorId(u64);
+
+impl Display for ActuatorId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Actuator {}", self.0)
+    }
+}
+
+impl RegistryIndex for ActuatorId {
+    fn next(&self) -> Self {
+        Self(self.0 + 1)
+    }
+}
+
+impl From<ActuatorId> for u64 {
+    fn from(value: ActuatorId) -> Self {
+        value.0
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default, Hash, PartialOrd, Ord, PartialEq, Eq)]
+pub struct ConsoleId(u64);
+
+impl Display for ConsoleId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Console {}", self.0)
+    }
+}
+
+impl RegistryIndex for ConsoleId {
+    fn next(&self) -> Self {
+        Self(self.0 + 1)
+    }
+}
+
+impl From<ConsoleId> for u64 {
+    fn from(value: ConsoleId) -> Self {
+        value.0
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default, Hash, PartialOrd, Ord, PartialEq, Eq)]
+pub struct DeviceId(u64);
+
+impl Display for DeviceId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Device {}", self.0)
+    }
+}
+
+impl RegistryIndex for DeviceId {
+    fn next(&self) -> Self {
+        Self(self.0 + 1)
+    }
+}
+
+impl From<DeviceId> for u64 {
+    fn from(value: DeviceId) -> Self {
+        value.0
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default, Hash, PartialOrd, Ord, PartialEq, Eq)]
+pub struct VolumeId(u64);
+
+impl Display for VolumeId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Volume {}", self.0)
+    }
+}
+
+impl RegistryIndex for VolumeId {
+    fn next(&self) -> Self {
+        Self(self.0 + 1)
+    }
+}
+
+impl From<VolumeId> for u64 {
+    fn from(value: VolumeId) -> Self {
+        value.0
+    }
+}
+
 struct ServerInner {
     config_dir: PathBuf,
     auth_info: Vec<config::Authentication>,
-    devices: Registry<u64, Arc<dyn Device>>,
-    consoles: Registry<u64, Arc<dyn Console>>,
-    actuators: Registry<u64, Arc<dyn Actuator>>,
-    volumes: Registry<u64, Arc<dyn Volume>>,
+    devices: Registry<DeviceId, Arc<dyn Device>>,
+    consoles: Registry<ConsoleId, Arc<dyn Console>>,
+    actuators: Registry<ActuatorId, Arc<dyn Actuator>>,
+    volumes: Registry<VolumeId, Arc<dyn Volume>>,
 }
 
 fn to_item_list<I, T>(registry: &Registry<I, T>) -> ItemList
@@ -472,7 +557,7 @@ impl Server {
         &self.inner.config_dir
     }
 
-    fn register_actuator<A>(&self, properties: Properties, actuator: A) -> u64
+    fn register_actuator<A>(&self, properties: Properties, actuator: A) -> ActuatorId
     where
         A: Actuator + 'static,
     {
@@ -484,7 +569,7 @@ impl Server {
     fn get_actuator(&self, id: u64) -> Option<Arc<dyn Actuator>> {
         self.inner
             .actuators
-            .lookup(id)
+            .lookup(ActuatorId(id))
             .map(|item| item.inner().clone())
     }
 
@@ -500,14 +585,14 @@ impl Server {
             .map(|(_, item)| item.inner().clone())
     }
 
-    fn unregister_actuator(&self, id: u64) {
+    fn unregister_actuator(&self, id: ActuatorId) {
         if let Some(item) = self.inner.actuators.lookup(id) {
             info!("Unregistering actuator: {} - {}", id, item);
             self.inner.actuators.remove(id);
         }
     }
 
-    fn register_console<C>(&self, properties: Properties, console: C) -> u64
+    fn register_console<C>(&self, properties: Properties, console: C) -> ConsoleId
     where
         C: Console + 'static,
     {
@@ -516,7 +601,7 @@ impl Server {
         id
     }
 
-    fn unregister_console(&self, id: u64) {
+    fn unregister_console(&self, id: ConsoleId) {
         if let Some(item) = self.inner.consoles.lookup(id) {
             info!("Unregistering console: {} - {}", id, item);
             self.inner.consoles.remove(id);
@@ -526,11 +611,11 @@ impl Server {
     fn get_console(&self, id: u64) -> Option<Arc<dyn Console>> {
         self.inner
             .consoles
-            .lookup(id)
+            .lookup(ConsoleId(id))
             .map(|item| item.inner().clone())
     }
 
-    fn register_volume<V>(&self, properties: Properties, volume: V) -> u64
+    fn register_volume<V>(&self, properties: Properties, volume: V) -> VolumeId
     where
         V: Volume + 'static,
     {
@@ -539,7 +624,7 @@ impl Server {
         id
     }
 
-    fn unregister_volume(&self, id: u64) {
+    fn unregister_volume(&self, id: VolumeId) {
         if let Some(item) = self.inner.volumes.lookup(id) {
             info!("Unregistering volume: {} - {}", id, item.name());
             self.inner.volumes.remove(id);
@@ -549,11 +634,11 @@ impl Server {
     pub fn get_volume(&self, id: u64) -> Option<Arc<dyn Volume>> {
         self.inner
             .volumes
-            .lookup(id)
+            .lookup(VolumeId(id))
             .map(registry::Item::into_inner)
     }
 
-    fn register_device<D>(&self, properties: Properties, device: D) -> u64
+    fn register_device<D>(&self, properties: Properties, device: D) -> DeviceId
     where
         D: Device + 'static,
     {
@@ -562,7 +647,7 @@ impl Server {
         id
     }
 
-    fn unregister_device(&self, id: u64) {
+    fn unregister_device(&self, id: DeviceId) {
         if let Some(item) = self.inner.devices.lookup(id) {
             info!("Unregistering device: {} - {}", id, item.name());
             self.inner.devices.remove(id);
@@ -572,7 +657,7 @@ impl Server {
     fn get_device(&self, id: u64) -> Option<Arc<dyn Device>> {
         self.inner
             .devices
-            .lookup(id)
+            .lookup(DeviceId(id))
             .map(registry::Item::into_inner)
     }
 
@@ -703,25 +788,25 @@ impl boardswarm_protocol::boardswarm_server::Boardswarm for Server {
             boardswarm_protocol::ItemType::Actuator => self
                 .inner
                 .actuators
-                .lookup(request.item)
+                .lookup(ActuatorId(request.item))
                 .ok_or_else(|| tonic::Status::not_found("Item not found"))?
                 .properties(),
             boardswarm_protocol::ItemType::Device => self
                 .inner
                 .devices
-                .lookup(request.item)
+                .lookup(DeviceId(request.item))
                 .ok_or_else(|| tonic::Status::not_found("Item not found"))?
                 .properties(),
             boardswarm_protocol::ItemType::Console => self
                 .inner
                 .consoles
-                .lookup(request.item)
+                .lookup(ConsoleId(request.item))
                 .ok_or_else(|| tonic::Status::not_found("Item not found"))?
                 .properties(),
             boardswarm_protocol::ItemType::Volume => self
                 .inner
                 .volumes
-                .lookup(request.item)
+                .lookup(VolumeId(request.item))
                 .ok_or_else(|| tonic::Status::not_found("Item not found"))?
                 .properties(),
         };
@@ -810,8 +895,7 @@ impl boardswarm_protocol::boardswarm_server::Boardswarm for Server {
         request: tonic::Request<boardswarm_protocol::DeviceRequest>,
     ) -> Result<tonic::Response<Self::DeviceInfoStream>, tonic::Status> {
         let request = request.into_inner();
-        if let Some(item) = self.inner.devices.lookup(request.device) {
-            let device = item.into_inner();
+        if let Some(device) = self.get_device(request.device) {
             let info = (&*device).into();
             let monitor = device.updates();
             let stream = Box::pin(stream::once(async move { Ok(info) }).chain(stream::unfold(
@@ -886,10 +970,7 @@ impl boardswarm_protocol::boardswarm_server::Boardswarm for Server {
 
         if let Some(volume_io_request::TargetOrRequest::Target(target)) = msg.target_or_request {
             let volume = self
-                .inner
-                .volumes
-                .lookup(target.volume)
-                .map(registry::Item::into_inner)
+                .get_volume(target.volume)
                 .ok_or_else(|| tonic::Status::not_found("No volume by that name"))?;
 
             let (mut reply, reply_stream) = VolumeIoReplies::new();

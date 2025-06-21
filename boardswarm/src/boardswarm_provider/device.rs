@@ -8,7 +8,7 @@ use futures::{pin_mut, Stream, StreamExt};
 use tokio::sync::broadcast;
 use tracing::{trace, warn};
 
-use crate::{DeviceMonitor, DeviceSetModeError};
+use crate::{ConsoleId, DeviceMonitor, DeviceSetModeError, VolumeId};
 
 use super::Provider;
 
@@ -22,8 +22,8 @@ pub struct BoardswarmDevice {
 
 struct BoardswarmDeviceInner {
     // Remote to local mapping
-    console_mapping: HashMap<u64, u64>,
-    volume_mapping: HashMap<u64, u64>,
+    console_mapping: HashMap<u64, ConsoleId>,
+    volume_mapping: HashMap<u64, VolumeId>,
     provider: Arc<Provider>,
     info: boardswarm_protocol::Device,
 }

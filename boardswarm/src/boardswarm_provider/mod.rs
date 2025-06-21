@@ -15,6 +15,10 @@ use tonic::transport::Uri;
 use tracing::info;
 use tracing::warn;
 
+use crate::ActuatorId;
+use crate::ConsoleId;
+use crate::DeviceId;
+use crate::VolumeId;
 use crate::{registry::Properties, Server};
 
 use self::actuator::BoardswarmActuator;
@@ -37,12 +41,23 @@ struct BoardswarmParameters {
 
 pub struct Provider {
     /* Remote to local mappings */
-    actuators: Mutex<HashMap<u64, u64>>,
-    consoles: Mutex<HashMap<u64, u64>>,
-    devices: Mutex<HashMap<u64, u64>>,
-    volumes: Mutex<HashMap<u64, u64>>,
+    actuators: Mutex<HashMap<u64, ActuatorId>>,
+    consoles: Mutex<HashMap<u64, ConsoleId>>,
+    devices: Mutex<HashMap<u64, DeviceId>>,
+    volumes: Mutex<HashMap<u64, VolumeId>>,
     notifier: broadcast::Sender<()>,
 }
+
+/*
+impl serde::Serialize for Provider {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        <Mutex<HashMap<u64, ConsoleId>> as serde::Serialize>::serialize(&self.consoles, serializer)
+    }
+}
+*/
 
 impl Provider {
     fn new() -> Self {
@@ -59,16 +74,16 @@ impl Provider {
         }
     }
 
-    pub fn console_id(&self, remote: u64) -> Option<u64> {
+    pub fn console_id(&self, remote: u64) -> Option<ConsoleId> {
         self.consoles.lock().unwrap().get(&remote).copied()
     }
 
     #[allow(dead_code)]
-    pub fn actuator_id(&self, remote: u64) -> Option<u64> {
+    pub fn actuator_id(&self, remote: u64) -> Option<ActuatorId> {
         self.actuators.lock().unwrap().get(&remote).copied()
     }
 
-    pub fn volume_id(&self, remote: u64) -> Option<u64> {
+    pub fn volume_id(&self, remote: u64) -> Option<VolumeId> {
         self.volumes.lock().unwrap().get(&remote).copied()
     }
 
@@ -127,7 +142,7 @@ fn remove_item(provider: &Provider, type_: ItemType, server: &Server, id: u64) {
         ItemType::Actuator => {
             let mut actuators = provider.actuators.lock().unwrap();
             if let Some(local) = actuators.remove(&id) {
-                server.unregister_console(local)
+                server.unregister_actuator(local)
             }
         }
         ItemType::Device => {

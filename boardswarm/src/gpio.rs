@@ -6,6 +6,7 @@ use tokio_gpiod::{Chip, Lines};
 use tracing::instrument;
 use tracing::{debug, warn};
 
+use crate::ActuatorId;
 use crate::{
     registry::{self, Properties},
     udev::DeviceEvent,
@@ -101,7 +102,7 @@ async fn setup_gpio_chip(
     parameters: &GpioParameters,
     mut properties: Properties,
     server: &Server,
-) -> Option<Vec<u64>> {
+) -> Option<Vec<ActuatorId>> {
     let chip = match Chip::new(&path).await {
         Ok(chip) => chip,
         Err(e) => {
@@ -140,7 +141,7 @@ async fn setup_gpio_line(
     name: &str,
     mut properties: Properties,
     server: &Server,
-) -> u64 {
+) -> ActuatorId {
     let info = chip.line_info(line).await.unwrap();
     properties.insert(registry::NAME, name);
     if !info.name.is_empty() {

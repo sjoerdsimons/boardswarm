@@ -8,14 +8,14 @@ use std::{
     task::Poll,
 };
 
-use crate::{registry::Properties, Server};
+use crate::{registry::Properties, Server, VolumeId};
 use futures::{ready, Stream};
 use tokio_udev::{AsyncMonitorSocket, Enumerator};
 use tracing::{info, warn};
 
 trait Registrations<IT> {
-    fn register(&self, properties: Properties, item: IT) -> u64;
-    fn unregister(&self, id: u64);
+    fn register(&self, properties: Properties, item: IT) -> VolumeId;
+    fn unregister(&self, id: VolumeId);
 }
 
 #[derive(Debug)]
@@ -23,7 +23,7 @@ enum RegistrationState {
     /// Pending registration for a given udev sequence number
     Pending(u64),
     /// Registered with volume id
-    Registered(u64),
+    Registered(VolumeId),
 }
 
 pub struct DeviceRegistrations<IT> {
@@ -88,11 +88,11 @@ impl<IT> Registrations<IT> for DeviceRegistrations<IT>
 where
     IT: crate::Volume + 'static,
 {
-    fn register(&self, properties: Properties, item: IT) -> u64 {
+    fn register(&self, properties: Properties, item: IT) -> VolumeId {
         self.server.register_volume(properties, item)
     }
 
-    fn unregister(&self, id: u64) {
+    fn unregister(&self, id: VolumeId) {
         self.server.unregister_volume(id);
     }
 }
