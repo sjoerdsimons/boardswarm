@@ -348,6 +348,7 @@ dependencies = [
  "reqwest",
  "rockusb",
  "serde",
+ "serde_json",
  "serde_yaml",
  "strum 0.27.1",
  "strum_macros 0.27.1",

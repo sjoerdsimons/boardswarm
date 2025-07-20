@@ -14,6 +14,7 @@ use futures::Sink;
 use hifive_p550_mcu::HifiveP550MCUProvider;
 use mediatek_brom::MediatekBromProvider;
 use registry::{Properties, Registry, RegistryIndex};
+use serde::Deserialize;
 use std::fmt::Display;
 use std::net::{AddrParseError, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -24,6 +25,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::Streaming;
 use tower_oauth2_resource_server::auth_resolver::KidAuthorizerResolver;
+use tower_oauth2_resource_server::claims::DefaultClaims;
 use tower_oauth2_resource_server::server::OAuth2ResourceServer;
 use tower_oauth2_resource_server::tenant::TenantConfiguration;
 use tracing::{error, info, instrument, warn};
@@ -43,6 +45,12 @@ mod rockusb;
 mod serial;
 mod udev;
 mod utils;
+
+#[derive(Clone, Debug, Deserialize)]
+struct MyClaims {
+    #[serde(flatten)]
+    other: serde_json::Value,
+}
 
 #[derive(Error, Debug)]
 #[error("Actuator failed")]
@@ -660,6 +668,10 @@ impl boardswarm_protocol::boardswarm_server::Boardswarm for Server {
         &self,
         request: tonic::Request<ItemTypeRequest>,
     ) -> Result<tonic::Response<ItemList>, tonic::Status> {
+        let extensions = request.extensions();
+        let auth: &MyClaims = extensions.get().unwrap();
+        warn!("{auth:#?}");
+        warn!("{:#?}", auth.other.pointer("/realm_access/roles"));
         let request = request.into_inner();
         let type_ = request
             .r#type
@@ -1044,9 +1056,9 @@ fn parse_listen_address(addr: &str) -> Result<SocketAddr, AddrParseError> {
 
 async fn setup_auth_layer(
     config: &[config::Authentication],
-) -> anyhow::Result<OAuth2ResourceServer> {
-    let mut resource =
-        OAuth2ResourceServer::builder().auth_resolver(Arc::new(KidAuthorizerResolver {}));
+) -> anyhow::Result<OAuth2ResourceServer<MyClaims>> {
+    let mut resource = OAuth2ResourceServer::<MyClaims>::builder()
+        .auth_resolver(Arc::new(KidAuthorizerResolver {}));
     for auth in config {
         let tenant = match auth {
             config::Authentication::Oidc { uri, audience, .. } => {
@@ -1055,9 +1067,15 @@ async fn setup_auth_layer(
                     .build()
                     .await?
             }
-            config::Authentication::Jwks { path } => {
+            config::Authentication::Jwks { path, identifier } => {
                 let jwks = tokio::fs::read_to_string(path).await?;
-                TenantConfiguration::static_builder(jwks).build()?
+                let t = TenantConfiguration::static_builder(jwks);
+                let t = if let Some(identifier) = identifier {
+                    t.identifier(identifier)
+                } else {
+                    t
+                };
+                t.build()?
             }
         };
         resource = resource.add_tenant(tenant);
@@ -1098,14 +1116,15 @@ async fn main() -> anyhow::Result<()> {
     let authentication: Vec<_> = config
         .server
         .authentication
-        .iter()
+        .into_iter()
         .map(|a| {
-            if let config::Authentication::Jwks { path } = a {
+            if let config::Authentication::Jwks { path, identifier } = a {
                 config::Authentication::Jwks {
                     path: opts.config.with_file_name(path),
+                    identifier,
                 }
             } else {
-                a.clone()
+                a
             }
         })
         .collect();

@@ -34,7 +34,10 @@ pub enum Authentication {
         audience: Vec<String>,
     },
     #[serde(rename = "jwks")]
-    Jwks { path: PathBuf },
+    Jwks {
+        path: PathBuf,
+        identifier: Option<String>,
+    },
 }
 
 #[derive(Debug, Deserialize)]
