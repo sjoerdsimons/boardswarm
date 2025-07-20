@@ -12,6 +12,7 @@ use tracing::info;
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub server: Server,
+    pub roles: Vec<Role>,
     pub providers: Vec<Provider>,
     pub devices: Vec<Device>,
 }
@@ -44,6 +45,27 @@ pub enum Authentication {
 pub struct Certificate {
     pub chain: PathBuf,
     pub key: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Role {
+    pub role: String,
+    pub matches: Vec<RoleMatches>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RoleMatches {
+    pub identifier: String,
+    #[serde(rename = "match")]
+    pub match_: HashMap<String, Scalar>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum Scalar {
+    Bool(bool),
+    Number(serde_yaml::Number),
+    String(String),
 }
 
 #[derive(Debug, Deserialize)]
