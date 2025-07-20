@@ -1,4 +1,5 @@
 use anyhow::{bail, Context};
+use authentication::{RoleLayer, Roles};
 use boardswarm_protocol::item_event::Event;
 use boardswarm_protocol::{
     console_input_request, volume_io_reply, volume_io_request, ConsoleConfigureRequest,
@@ -14,7 +15,6 @@ use futures::Sink;
 use hifive_p550_mcu::HifiveP550MCUProvider;
 use mediatek_brom::MediatekBromProvider;
 use registry::{Properties, Registry, RegistryIndex};
-use serde::Deserialize;
 use std::fmt::Display;
 use std::net::{AddrParseError, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -24,12 +24,9 @@ use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::Streaming;
-use tower_oauth2_resource_server::auth_resolver::KidAuthorizerResolver;
-use tower_oauth2_resource_server::claims::DefaultClaims;
-use tower_oauth2_resource_server::server::OAuth2ResourceServer;
-use tower_oauth2_resource_server::tenant::TenantConfiguration;
 use tracing::{error, info, instrument, warn};
 
+mod authentication;
 mod boardswarm_provider;
 mod config;
 mod config_device;
@@ -45,12 +42,6 @@ mod rockusb;
 mod serial;
 mod udev;
 mod utils;
-
-#[derive(Clone, Debug, Deserialize)]
-struct MyClaims {
-    #[serde(flatten)]
-    other: serde_json::Value,
-}
 
 #[derive(Error, Debug)]
 #[error("Actuator failed")]
@@ -669,9 +660,40 @@ impl boardswarm_protocol::boardswarm_server::Boardswarm for Server {
         request: tonic::Request<ItemTypeRequest>,
     ) -> Result<tonic::Response<ItemList>, tonic::Status> {
         let extensions = request.extensions();
+        let role: Option<&Roles> = extensions.get();
+        warn!("{role:#?}");
+        /*
+        let extensions = request.extensions();
         let auth: &MyClaims = extensions.get().unwrap();
         warn!("{auth:#?}");
         warn!("{:#?}", auth.other.pointer("/realm_access/roles"));
+
+        for r in &self.inner.roles {
+            if r.matches.iter().any(|m| {
+                // TODO match identifier
+                m.match_.iter().all(|(p, v)| {
+                    let Some(value) = auth.other.pointer(p) else {
+                        return false;
+                    };
+                    match value {
+                        serde_json::Value::Bool(_) => todo!(),
+                        serde_json::Value::Number(number) => &number.to_string() == v,
+                        serde_json::Value::String(s) => s == v,
+                        serde_json::Value::Array(a) => a.iter().any(|v| match v {
+                            serde_json::Value::String(s) => s == v,
+                            _ => false,
+                        }),
+                        _ => false,
+                    }
+                })
+            }) {
+                warn!("Role detected: {}", r.role);
+            } else {
+                warn!("Role not detected: {}", r.role);
+            }
+        }
+        */
+
         let request = request.into_inner();
         let type_ = request
             .r#type
@@ -1053,36 +1075,6 @@ fn parse_listen_address(addr: &str) -> Result<SocketAddr, AddrParseError> {
         Ok(SocketAddr::new(ip, boardswarm_protocol::DEFAULT_PORT))
     }
 }
-
-async fn setup_auth_layer(
-    config: &[config::Authentication],
-) -> anyhow::Result<OAuth2ResourceServer<MyClaims>> {
-    let mut resource = OAuth2ResourceServer::<MyClaims>::builder()
-        .auth_resolver(Arc::new(KidAuthorizerResolver {}));
-    for auth in config {
-        let tenant = match auth {
-            config::Authentication::Oidc { uri, audience, .. } => {
-                TenantConfiguration::builder(uri)
-                    .audiences(audience.as_slice())
-                    .build()
-                    .await?
-            }
-            config::Authentication::Jwks { path, identifier } => {
-                let jwks = tokio::fs::read_to_string(path).await?;
-                let t = TenantConfiguration::static_builder(jwks);
-                let t = if let Some(identifier) = identifier {
-                    t.identifier(identifier)
-                } else {
-                    t
-                };
-                t.build()?
-            }
-        };
-        resource = resource.add_tenant(tenant);
-    }
-    Ok(resource.build().await?)
-}
-
 #[derive(Debug, clap::Parser)]
 struct Opts {
     #[clap(short, long)]
@@ -1223,10 +1215,15 @@ async fn main() -> anyhow::Result<()> {
         boardswarm_protocol::boardswarm_server::BoardswarmServer::new(server.clone()),
     );
 
-    let auth = setup_auth_layer(&server.inner.auth_info).await?;
+    let auth = authentication::setup_auth_layer(&server.inner.auth_info).await?;
     let router = boardswarm
         .into_axum_router()
+        // Middle Layers in reverse order!
+        // Extract and insert roles from the jwt claims
+        .layer(RoleLayer::new(config.roles))
+        // Authenticate
         .layer(auth.into_layer())
+        // Redirect LoginInfo before authentication
         .route_service(
             &format!("/{}/LoginInfo",
           <boardswarm_protocol::boardswarm_server::BoardswarmServer<Server>
