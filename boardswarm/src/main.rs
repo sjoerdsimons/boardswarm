@@ -662,38 +662,6 @@ impl boardswarm_protocol::boardswarm_server::Boardswarm for Server {
         let extensions = request.extensions();
         let role: Option<&Roles> = extensions.get();
         warn!("{role:#?}");
-        /*
-        let extensions = request.extensions();
-        let auth: &MyClaims = extensions.get().unwrap();
-        warn!("{auth:#?}");
-        warn!("{:#?}", auth.other.pointer("/realm_access/roles"));
-
-        for r in &self.inner.roles {
-            if r.matches.iter().any(|m| {
-                // TODO match identifier
-                m.match_.iter().all(|(p, v)| {
-                    let Some(value) = auth.other.pointer(p) else {
-                        return false;
-                    };
-                    match value {
-                        serde_json::Value::Bool(_) => todo!(),
-                        serde_json::Value::Number(number) => &number.to_string() == v,
-                        serde_json::Value::String(s) => s == v,
-                        serde_json::Value::Array(a) => a.iter().any(|v| match v {
-                            serde_json::Value::String(s) => s == v,
-                            _ => false,
-                        }),
-                        _ => false,
-                    }
-                })
-            }) {
-                warn!("Role detected: {}", r.role);
-            } else {
-                warn!("Role not detected: {}", r.role);
-            }
-        }
-        */
-
         let request = request.into_inner();
         let type_ = request
             .r#type
