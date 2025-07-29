@@ -105,12 +105,13 @@ impl From<HashMap<String, String>> for Properties {
 }
 
 #[derive(Clone, Debug)]
-pub struct Item<T> {
+pub struct Item<A, T> {
+    acl: Arc<A>, // acl
     properties: Arc<Properties>,
     item: T,
 }
 
-impl<T> std::fmt::Display for Item<T> {
+impl<A, T> std::fmt::Display for Item<A, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(instance) = self.instance() {
             write!(f, "{} on {}", self.name(), instance)
@@ -120,9 +121,10 @@ impl<T> std::fmt::Display for Item<T> {
     }
 }
 
-impl<T> Item<T> {
-    pub fn new(properties: Properties, item: T) -> Self {
+impl<A, T> Item<A, T> {
+    pub fn new(acl: A, properties: Properties, item: T) -> Self {
         Item {
+            acl: Arc::new(acl),
             properties: Arc::new(properties),
             item,
         }
@@ -137,6 +139,10 @@ impl<T> Item<T> {
 
     pub fn properties(&self) -> Arc<Properties> {
         self.properties.clone()
+    }
+
+    pub fn acl(&self) -> &A {
+        &self.acl
     }
 
     pub fn inner(&self) -> &T {
@@ -164,31 +170,52 @@ impl RegistryIndex for u64 {
     }
 }
 
+pub trait Verifier: Clone {
+    type Token;
+    type Acl: Clone + Send + Sync + 'static;
+    fn verify(&self, tokens: &Self::Token, acl: &Self::Acl) -> bool;
+}
+
 #[derive(Clone)]
-pub enum RegistryChange<I, T> {
-    Added { id: I, item: Item<T> },
+pub struct NoVerification {}
+impl Verifier for NoVerification {
+    type Token = ();
+    type Acl = ();
+
+    fn verify(&self, _tokens: &Self::Token, _acl: &Self::Acl) -> bool {
+        true
+    }
+}
+
+#[derive(Clone)]
+pub enum RegistryChange<I, A, T> {
+    Added { id: I, item: Item<A, T> },
     Removed(I),
 }
 
 #[derive(Debug)]
-struct RegistryInner<I, T> {
+struct RegistryInner<I, A, T> {
     next: I,
-    contents: BTreeMap<I, Item<T>>,
+    contents: BTreeMap<I, Item<A, T>>,
 }
 
 #[derive(Debug)]
-pub struct Registry<I, T> {
-    monitor: broadcast::Sender<RegistryChange<I, T>>,
-    inner: RwLock<RegistryInner<I, T>>,
+pub struct Registry<V: Verifier, I, T> {
+    monitor: broadcast::Sender<RegistryChange<I, V::Acl, T>>,
+    verifier: V,
+    inner: RwLock<RegistryInner<I, V::Acl, T>>,
 }
 
-impl<I, T> Registry<I, T>
+impl<V, I, T> Registry<V, I, T>
 where
     I: RegistryIndex,
     T: Clone,
+    V: Verifier + Clone,
 {
-    pub fn new() -> Self {
+    //ACL: create with authenticator
+    pub fn new(verifier: V) -> Self {
         Self {
+            verifier,
             monitor: broadcast::channel(16).0,
             inner: RwLock::new(RegistryInner {
                 next: I::default(),
@@ -197,8 +224,9 @@ where
         }
     }
 
-    pub fn add(&self, properties: Properties, item: T) -> (I, Item<T>) {
-        let item = Item::new(properties, item);
+    //ACL: Add with authentication requirements
+    pub fn add(&self, acl: V::Acl, properties: Properties, item: T) -> (I, Item<V::Acl, T>) {
+        let item = Item::new(acl, properties, item);
         let mut inner = self.inner.write().unwrap();
         let id = inner.next;
         inner.next = inner.next.next();
@@ -210,6 +238,7 @@ where
         (id, item)
     }
 
+    // internal only
     pub fn remove(&self, id: I) {
         let mut inner = self.inner.write().unwrap();
         if let Some(_item) = inner.contents.remove(&id) {
@@ -217,52 +246,74 @@ where
         }
     }
 
-    pub fn lookup(&self, id: I) -> Option<Item<T>> {
+    //ACL: Access with needed Tokens
+    pub fn lookup(&self, id: I, token: &V::Token) -> Option<Item<V::Acl, T>> {
         let inner = self.inner.read().unwrap();
-        inner.contents.get(&id).cloned()
+        let item = inner.contents.get(&id)?;
+        if self.verifier.verify(token, &item.acl) {
+            Some(item.clone())
+        } else {
+            None
+        }
     }
 
     #[allow(dead_code)]
-    pub fn ids(&self) -> Vec<I> {
-        let inner = self.inner.read().unwrap();
-        inner.contents.keys().copied().collect()
-    }
-
-    pub fn contents(&self) -> Vec<(I, Item<T>)> {
+    //ACL: Access with tokens
+    pub fn ids(&self, token: &V::Token) -> Vec<I> {
         let inner = self.inner.read().unwrap();
         inner
             .contents
             .iter()
-            .map(|(&id, item)| (id, item.clone()))
+            .filter_map(|(k, i)| {
+                if self.verifier.verify(token, &i.acl) {
+                    Some(*k)
+                } else {
+                    None
+                }
+            })
             .collect()
     }
 
-    pub fn find<'a, K, V, IT>(&self, matches: &'a IT) -> Option<(I, Item<T>)>
+    //ACL: Access with tokens
+    pub fn contents(&self, token: &V::Token) -> Vec<(I, Item<V::Acl, T>)> {
+        let inner = self.inner.read().unwrap();
+        inner
+            .contents
+            .iter()
+            .filter_map(|(&id, item)| {
+                if self.verifier.verify(token, &item.acl) {
+                    Some((id, item.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    //ACL: Access with tokens
+    pub fn find<'a, K, Val, IT>(
+        &self,
+        matches: &'a IT,
+        token: &V::Token,
+    ) -> Option<(I, Item<V::Acl, T>)>
     where
         K: AsRef<str>,
-        V: AsRef<str>,
-        &'a IT: IntoIterator<Item = (K, V)>,
+        Val: AsRef<str>,
+        &'a IT: IntoIterator<Item = (K, Val)>,
     {
         let inner = self.inner.read().unwrap();
         inner
             .contents
             .iter()
-            .find(|(&_id, item)| item.properties.matches(matches))
+            .find(|(&_id, item)| {
+                self.verifier.verify(token, &item.acl) && item.properties.matches(matches)
+            })
             .map(|(&id, item)| (id, item.clone()))
     }
 
-    pub fn monitor(&self) -> Receiver<RegistryChange<I, T>> {
+    //ACL: Filtered subscription with tokens
+    pub fn monitor(&self) -> Receiver<RegistryChange<I, V::Acl, T>> {
         self.monitor.subscribe()
-    }
-}
-
-impl<I, T> Default for Registry<I, T>
-where
-    I: RegistryIndex,
-    T: Clone,
-{
-    fn default() -> Self {
-        Self::new()
     }
 }
 

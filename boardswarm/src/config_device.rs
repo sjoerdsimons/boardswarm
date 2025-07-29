@@ -146,10 +146,10 @@ impl Device {
     }
 
     async fn monitor_items(&self) {
-        fn add_item_with<'a, C, F, I, IT, T>(
+        fn add_item_with<'a, A, C, F, I, IT, T>(
             items: IT,
             id: I,
-            item: registry::Item<T>,
+            item: registry::Item<A, T>,
             f: F,
         ) -> bool
         where
@@ -168,7 +168,7 @@ impl Device {
             })
         }
 
-        fn add_item<'a, C, I, IT, T>(items: IT, id: I, item: registry::Item<T>) -> bool
+        fn add_item<'a, A, C, I, IT, T>(items: IT, id: I, item: registry::Item<A, T>) -> bool
         where
             C: DeviceConfigItem + 'a,
             I: Copy + Eq + 'static,
@@ -177,7 +177,11 @@ impl Device {
             add_item_with(items, id, item, |_, _| {})
         }
 
-        fn change_with<'a, C, F, I, IT, T>(items: IT, change: RegistryChange<I, T>, f: F) -> bool
+        fn change_with<'a, A, C, F, I, IT, T>(
+            items: IT,
+            change: RegistryChange<I, A, T>,
+            f: F,
+        ) -> bool
         where
             C: DeviceConfigItem + 'a,
             I: Copy + Eq + 'static,
@@ -192,7 +196,7 @@ impl Device {
             }
         }
 
-        fn change<'a, C, I, IT, T>(items: IT, change: RegistryChange<I, T>) -> bool
+        fn change<'a, A, C, I, IT, T>(items: IT, change: RegistryChange<I, A, T>) -> bool
         where
             C: DeviceConfigItem + 'a,
             I: Copy + Eq + 'static,
@@ -217,7 +221,7 @@ impl Device {
         let mut volume_monitor = self.inner.server.inner.volumes.monitor();
         let mut changed = false;
 
-        for (id, item) in self.inner.server.inner.actuators.contents() {
+        for (id, item) in self.inner.server.inner.actuators.contents(&()) {
             changed |= add_item(
                 self.inner.modes.iter().flat_map(|m| m.sequence.iter()),
                 id,
@@ -225,11 +229,11 @@ impl Device {
             );
         }
 
-        for (id, item) in self.inner.server.inner.consoles.contents() {
+        for (id, item) in self.inner.server.inner.consoles.contents(&()) {
             changed |= add_item_with(self.inner.consoles.iter(), id, item, setup_console);
         }
 
-        for (id, item) in self.inner.server.inner.volumes.contents() {
+        for (id, item) in self.inner.server.inner.volumes.contents(&()) {
             changed |= add_item(self.inner.volumes.iter(), id, item);
         }
 

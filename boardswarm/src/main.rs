@@ -14,7 +14,7 @@ use futures::stream::BoxStream;
 use futures::Sink;
 use hifive_p550_mcu::HifiveP550MCUProvider;
 use mediatek_brom::MediatekBromProvider;
-use registry::{Properties, Registry, RegistryIndex};
+use registry::{NoVerification, Properties, Registry, RegistryIndex, Verifier};
 use std::fmt::Display;
 use std::net::{AddrParseError, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -462,24 +462,24 @@ impl_u64_index!(VolumeId, Volume);
 struct ServerInner {
     config_dir: PathBuf,
     auth_info: Vec<config::Authentication>,
-    devices: Registry<DeviceId, Arc<dyn Device>>,
-    consoles: Registry<ConsoleId, Arc<dyn Console>>,
-    actuators: Registry<ActuatorId, Arc<dyn Actuator>>,
-    volumes: Registry<VolumeId, Arc<dyn Volume>>,
+    devices: Registry<NoVerification, DeviceId, Arc<dyn Device>>,
+    consoles: Registry<NoVerification, ConsoleId, Arc<dyn Console>>,
+    actuators: Registry<NoVerification, ActuatorId, Arc<dyn Actuator>>,
+    volumes: Registry<NoVerification, VolumeId, Arc<dyn Volume>>,
 }
 
-fn to_item_list<I, T>(registry: &Registry<I, T>) -> ItemList
+fn to_item_list<V: Verifier, I, T>(registry: &Registry<V, I, T>, token: &V::Token) -> ItemList
 where
     I: RegistryIndex + Into<u64>,
     T: Clone,
 {
     let item = registry
-        .contents()
+        .contents(token)
         .into_iter()
         .map(|(id, item)| boardswarm_protocol::Item {
             id: id.into(),
-            name: item.properties().name().to_string(),
-            instance: item.properties().instance().map(ToOwned::to_owned),
+            name: item.name().to_string(),
+            instance: item.instance().map(ToOwned::to_owned),
         })
         .collect();
     ItemList { item }
@@ -496,10 +496,10 @@ impl Server {
             inner: Arc::new(ServerInner {
                 auth_info,
                 config_dir,
-                consoles: Registry::new(),
-                devices: Registry::new(),
-                actuators: Registry::new(),
-                volumes: Registry::new(),
+                consoles: Registry::new(NoVerification {}),
+                devices: Registry::new(NoVerification {}),
+                actuators: Registry::new(NoVerification {}),
+                volumes: Registry::new(NoVerification {}),
             }),
         }
     }
@@ -512,7 +512,7 @@ impl Server {
     where
         A: Actuator + 'static,
     {
-        let (id, item) = self.inner.actuators.add(properties, Arc::new(actuator));
+        let (id, item) = self.inner.actuators.add((), properties, Arc::new(actuator));
         info!("Registered actuator: {} - {}", id, item);
         id
     }
@@ -520,8 +520,8 @@ impl Server {
     fn get_actuator(&self, id: ActuatorId) -> Option<Arc<dyn Actuator>> {
         self.inner
             .actuators
-            .lookup(id)
-            .map(|item| item.inner().clone())
+            .lookup(id, &())
+            .map(|item| item.into_inner())
     }
 
     fn find_actuator<'a, K, V, I>(&self, matches: &'a I) -> Option<Arc<dyn Actuator>>
@@ -532,12 +532,12 @@ impl Server {
     {
         self.inner
             .actuators
-            .find(matches)
-            .map(|(_, item)| item.inner().clone())
+            .find(matches, &())
+            .map(|(_, item)| item.into_inner())
     }
 
     fn unregister_actuator(&self, id: ActuatorId) {
-        if let Some(item) = self.inner.actuators.lookup(id) {
+        if let Some(item) = self.inner.actuators.lookup(id, &()) {
             info!("Unregistering actuator: {} - {}", id, item);
             self.inner.actuators.remove(id);
         }
@@ -547,13 +547,13 @@ impl Server {
     where
         C: Console + 'static,
     {
-        let (id, item) = self.inner.consoles.add(properties, Arc::new(console));
+        let (id, item) = self.inner.consoles.add((), properties, Arc::new(console));
         info!("Registered console: {} - {}", id, item);
         id
     }
 
     fn unregister_console(&self, id: ConsoleId) {
-        if let Some(item) = self.inner.consoles.lookup(id) {
+        if let Some(item) = self.inner.consoles.lookup(id, &()) {
             info!("Unregistering console: {} - {}", id, item);
             self.inner.consoles.remove(id);
         }
@@ -562,21 +562,21 @@ impl Server {
     fn get_console(&self, id: ConsoleId) -> Option<Arc<dyn Console>> {
         self.inner
             .consoles
-            .lookup(id)
-            .map(|item| item.inner().clone())
+            .lookup(id, &())
+            .map(|item| item.into_inner())
     }
 
     fn register_volume<V>(&self, properties: Properties, volume: V) -> VolumeId
     where
         V: Volume + 'static,
     {
-        let (id, item) = self.inner.volumes.add(properties, Arc::new(volume));
+        let (id, item) = self.inner.volumes.add((), properties, Arc::new(volume));
         info!("Registered volume: {} - {}", id, item);
         id
     }
 
     fn unregister_volume(&self, id: VolumeId) {
-        if let Some(item) = self.inner.volumes.lookup(id) {
+        if let Some(item) = self.inner.volumes.lookup(id, &()) {
             info!("Unregistering volume: {} - {}", id, item.name());
             self.inner.volumes.remove(id);
         }
@@ -585,7 +585,7 @@ impl Server {
     pub fn get_volume(&self, id: VolumeId) -> Option<Arc<dyn Volume>> {
         self.inner
             .volumes
-            .lookup(id)
+            .lookup(id, &())
             .map(registry::Item::into_inner)
     }
 
@@ -593,13 +593,13 @@ impl Server {
     where
         D: Device + 'static,
     {
-        let (id, item) = self.inner.devices.add(properties, Arc::new(device));
+        let (id, item) = self.inner.devices.add((), properties, Arc::new(device));
         info!("Registered device: {} - {}", id, item);
         id
     }
 
     fn unregister_device(&self, id: DeviceId) {
-        if let Some(item) = self.inner.devices.lookup(id) {
+        if let Some(item) = self.inner.devices.lookup(id, &()) {
             info!("Unregistering device: {} - {}", id, item.name());
             self.inner.devices.remove(id);
         }
@@ -608,16 +608,16 @@ impl Server {
     fn get_device(&self, id: u64) -> Option<Arc<dyn Device>> {
         self.inner
             .devices
-            .lookup(DeviceId(id))
+            .lookup(DeviceId(id), &())
             .map(registry::Item::into_inner)
     }
 
     fn item_list_for(&self, type_: boardswarm_protocol::ItemType) -> ItemList {
         match type_ {
-            boardswarm_protocol::ItemType::Actuator => to_item_list(&self.inner.actuators),
-            boardswarm_protocol::ItemType::Device => to_item_list(&self.inner.devices),
-            boardswarm_protocol::ItemType::Console => to_item_list(&self.inner.consoles),
-            boardswarm_protocol::ItemType::Volume => to_item_list(&self.inner.volumes),
+            boardswarm_protocol::ItemType::Actuator => to_item_list(&self.inner.actuators, &()),
+            boardswarm_protocol::ItemType::Device => to_item_list(&self.inner.devices, &()),
+            boardswarm_protocol::ItemType::Console => to_item_list(&self.inner.consoles, &()),
+            boardswarm_protocol::ItemType::Volume => to_item_list(&self.inner.volumes, &()),
         }
     }
 }
@@ -682,14 +682,17 @@ impl boardswarm_protocol::boardswarm_server::Boardswarm for Server {
             .try_into()
             .map_err(|_e| tonic::Status::invalid_argument("Unknown item type "))?;
 
-        fn to_item_stream<I, T>(registry: &Registry<I, T>) -> ItemMonitorStream
+        fn to_item_stream<V: Verifier, I, T>(
+            registry: &Registry<V, I, T>,
+            token: &V::Token,
+        ) -> ItemMonitorStream
         where
             I: RegistryIndex + Into<u64> + Send + 'static,
             T: Clone + Send + 'static,
         {
             let monitor = registry.monitor();
             let initial = Ok(ItemEvent {
-                event: Some(Event::Add(to_item_list(registry))),
+                event: Some(Event::Add(to_item_list(registry, token))),
             });
             stream::once(async move { initial })
                 .chain(stream::unfold(monitor, |mut monitor| async move {
@@ -701,10 +704,7 @@ impl boardswarm_protocol::boardswarm_server::Boardswarm for Server {
                                     item: vec![boardswarm_protocol::Item {
                                         id: id.into(),
                                         name: item.name().to_string(),
-                                        instance: item
-                                            .properties()
-                                            .instance()
-                                            .map(ToOwned::to_owned),
+                                        instance: item.instance().map(ToOwned::to_owned),
                                     }],
                                 })),
                             }),
@@ -721,10 +721,10 @@ impl boardswarm_protocol::boardswarm_server::Boardswarm for Server {
                 .boxed()
         }
         let response = match type_ {
-            boardswarm_protocol::ItemType::Actuator => to_item_stream(&self.inner.actuators),
-            boardswarm_protocol::ItemType::Device => to_item_stream(&self.inner.devices),
-            boardswarm_protocol::ItemType::Console => to_item_stream(&self.inner.consoles),
-            boardswarm_protocol::ItemType::Volume => to_item_stream(&self.inner.volumes),
+            boardswarm_protocol::ItemType::Actuator => to_item_stream(&self.inner.actuators, &()),
+            boardswarm_protocol::ItemType::Device => to_item_stream(&self.inner.devices, &()),
+            boardswarm_protocol::ItemType::Console => to_item_stream(&self.inner.consoles, &()),
+            boardswarm_protocol::ItemType::Volume => to_item_stream(&self.inner.volumes, &()),
         };
         Ok(tonic::Response::new(response))
     }
@@ -742,25 +742,25 @@ impl boardswarm_protocol::boardswarm_server::Boardswarm for Server {
             boardswarm_protocol::ItemType::Actuator => self
                 .inner
                 .actuators
-                .lookup(ActuatorId(request.item))
+                .lookup(ActuatorId(request.item), &())
                 .ok_or_else(|| tonic::Status::not_found("Item not found"))?
                 .properties(),
             boardswarm_protocol::ItemType::Device => self
                 .inner
                 .devices
-                .lookup(DeviceId(request.item))
+                .lookup(DeviceId(request.item), &())
                 .ok_or_else(|| tonic::Status::not_found("Item not found"))?
                 .properties(),
             boardswarm_protocol::ItemType::Console => self
                 .inner
                 .consoles
-                .lookup(ConsoleId(request.item))
+                .lookup(ConsoleId(request.item), &())
                 .ok_or_else(|| tonic::Status::not_found("Item not found"))?
                 .properties(),
             boardswarm_protocol::ItemType::Volume => self
                 .inner
                 .volumes
-                .lookup(VolumeId(request.item))
+                .lookup(VolumeId(request.item), &())
                 .ok_or_else(|| tonic::Status::not_found("Item not found"))?
                 .properties(),
         };
