@@ -241,7 +241,7 @@ where
     pub fn new(verifier: V) -> Self {
         Self {
             verifier,
-            monitor: broadcast::channel(16).0,
+            monitor: broadcast::channel(1024).0,
             inner: RwLock::new(RegistryInner {
                 next: I::default(),
                 contents: BTreeMap::new(),
