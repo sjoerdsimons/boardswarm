@@ -171,18 +171,18 @@ impl RegistryIndex for u64 {
 }
 
 pub trait Verifier: Clone {
-    type Token;
+    type Credential;
     type Acl: Clone + Send + Sync + 'static;
-    fn verify(&self, tokens: &Self::Token, acl: &Self::Acl) -> bool;
+    fn verify(&self, tokens: &Self::Credential, acl: &Self::Acl) -> bool;
 }
 
 #[derive(Clone)]
 pub struct NoVerification {}
 impl Verifier for NoVerification {
-    type Token = ();
+    type Credential = ();
     type Acl = ();
 
-    fn verify(&self, _tokens: &Self::Token, _acl: &Self::Acl) -> bool {
+    fn verify(&self, _tokens: &Self::Credential, _acl: &Self::Acl) -> bool {
         true
     }
 }
@@ -247,7 +247,7 @@ where
     }
 
     //ACL: Access with needed Tokens
-    pub fn lookup(&self, id: I, token: &V::Token) -> Option<Item<V::Acl, T>> {
+    pub fn lookup(&self, id: I, token: &V::Credential) -> Option<Item<V::Acl, T>> {
         let inner = self.inner.read().unwrap();
         let item = inner.contents.get(&id)?;
         if self.verifier.verify(token, &item.acl) {
@@ -259,7 +259,7 @@ where
 
     #[allow(dead_code)]
     //ACL: Access with tokens
-    pub fn ids(&self, token: &V::Token) -> Vec<I> {
+    pub fn ids(&self, token: &V::Credential) -> Vec<I> {
         let inner = self.inner.read().unwrap();
         inner
             .contents
@@ -275,7 +275,7 @@ where
     }
 
     //ACL: Access with tokens
-    pub fn contents(&self, token: &V::Token) -> Vec<(I, Item<V::Acl, T>)> {
+    pub fn contents(&self, token: &V::Credential) -> Vec<(I, Item<V::Acl, T>)> {
         let inner = self.inner.read().unwrap();
         inner
             .contents
@@ -294,7 +294,7 @@ where
     pub fn find<'a, K, Val, IT>(
         &self,
         matches: &'a IT,
-        token: &V::Token,
+        token: &V::Credential,
     ) -> Option<(I, Item<V::Acl, T>)>
     where
         K: AsRef<str>,

@@ -468,7 +468,7 @@ struct ServerInner {
     volumes: Registry<NoVerification, VolumeId, Arc<dyn Volume>>,
 }
 
-fn to_item_list<V: Verifier, I, T>(registry: &Registry<V, I, T>, token: &V::Token) -> ItemList
+fn to_item_list<V: Verifier, I, T>(registry: &Registry<V, I, T>, token: &V::Credential) -> ItemList
 where
     I: RegistryIndex + Into<u64>,
     T: Clone,
@@ -684,7 +684,7 @@ impl boardswarm_protocol::boardswarm_server::Boardswarm for Server {
 
         fn to_item_stream<V: Verifier, I, T>(
             registry: &Registry<V, I, T>,
-            token: &V::Token,
+            token: &V::Credential,
         ) -> ItemMonitorStream
         where
             I: RegistryIndex + Into<u64> + Send + 'static,
