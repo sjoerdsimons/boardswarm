@@ -237,7 +237,6 @@ where
     T: Clone,
     V: Verifier + Clone,
 {
-    //ACL: create with authenticator
     pub fn new(verifier: V) -> Self {
         Self {
             verifier,
@@ -249,7 +248,6 @@ where
         }
     }
 
-    //ACL: Add with authentication requirements
     pub fn add(&self, acl: V::Acl, properties: Properties, item: T) -> (I, Item<V::Acl, T>) {
         let item = Item::new(acl, properties, item);
         let mut inner = self.inner.write().unwrap();
@@ -263,7 +261,6 @@ where
         (id, item)
     }
 
-    // Assumed to be internal only
     pub fn remove(&self, id: I) {
         let mut inner = self.inner.write().unwrap();
         if let Some(item) = inner.contents.remove(&id) {
