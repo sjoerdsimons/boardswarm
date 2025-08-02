@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::RwLock;
 
 use tokio::sync::broadcast;
+use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::broadcast::Receiver;
 
 pub const NAME: &str = "boardswarm.name";
@@ -171,7 +172,7 @@ impl RegistryIndex for u64 {
 }
 
 pub trait Verifier: Clone {
-    type Credential;
+    type Credential: Clone + Send + Sync;
     type Acl: Clone + Send + Sync + 'static;
     fn verify(&self, tokens: &Self::Credential, acl: &Self::Acl) -> bool;
 }
@@ -193,6 +194,30 @@ pub enum RegistryChange<I, A, T> {
     Removed(I),
 }
 
+impl<I, A, T> From<RegistryChangeInternal<I, A, T>> for RegistryChange<I, A, T> {
+    fn from(val: RegistryChangeInternal<I, A, T>) -> Self {
+        match val {
+            RegistryChangeInternal::Added { id, item } => Self::Added { id, item },
+            RegistryChangeInternal::Removed { id, .. } => Self::Removed(id),
+        }
+    }
+}
+
+#[derive(Clone)]
+enum RegistryChangeInternal<I, A, T> {
+    Added { id: I, item: Item<A, T> },
+    Removed { id: I, acl: Arc<A> },
+}
+
+impl<I, A, T> RegistryChangeInternal<I, A, T> {
+    fn acl(&self) -> &A {
+        match self {
+            RegistryChangeInternal::Added { item, .. } => item.acl(),
+            RegistryChangeInternal::Removed { acl, .. } => acl,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct RegistryInner<I, A, T> {
     next: I,
@@ -201,7 +226,7 @@ struct RegistryInner<I, A, T> {
 
 #[derive(Debug)]
 pub struct Registry<V: Verifier, I, T> {
-    monitor: broadcast::Sender<RegistryChange<I, V::Acl, T>>,
+    monitor: broadcast::Sender<RegistryChangeInternal<I, V::Acl, T>>,
     verifier: V,
     inner: RwLock<RegistryInner<I, V::Acl, T>>,
 }
@@ -231,26 +256,27 @@ where
         let id = inner.next;
         inner.next = inner.next.next();
         inner.contents.insert(id, item.clone());
-        let _ = self.monitor.send(RegistryChange::Added {
+        let _ = self.monitor.send(RegistryChangeInternal::Added {
             id,
             item: item.clone(),
         });
         (id, item)
     }
 
-    // internal only
+    // Assumed to be internal only
     pub fn remove(&self, id: I) {
         let mut inner = self.inner.write().unwrap();
-        if let Some(_item) = inner.contents.remove(&id) {
-            let _ = self.monitor.send(RegistryChange::Removed(id));
+        if let Some(item) = inner.contents.remove(&id) {
+            let _ = self
+                .monitor
+                .send(RegistryChangeInternal::Removed { id, acl: item.acl });
         }
     }
 
-    //ACL: Access with needed Tokens
-    pub fn lookup(&self, id: I, token: &V::Credential) -> Option<Item<V::Acl, T>> {
+    pub fn lookup(&self, id: I, cred: &V::Credential) -> Option<Item<V::Acl, T>> {
         let inner = self.inner.read().unwrap();
         let item = inner.contents.get(&id)?;
-        if self.verifier.verify(token, &item.acl) {
+        if self.verifier.verify(cred, &item.acl) {
             Some(item.clone())
         } else {
             None
@@ -258,15 +284,14 @@ where
     }
 
     #[allow(dead_code)]
-    //ACL: Access with tokens
-    pub fn ids(&self, token: &V::Credential) -> Vec<I> {
+    pub fn ids(&self, cred: &V::Credential) -> Vec<I> {
         let inner = self.inner.read().unwrap();
         inner
             .contents
             .iter()
-            .filter_map(|(k, i)| {
-                if self.verifier.verify(token, &i.acl) {
-                    Some(*k)
+            .filter_map(|(&id, item)| {
+                if self.verifier.verify(cred, &item.acl) {
+                    Some(id)
                 } else {
                     None
                 }
@@ -274,7 +299,6 @@ where
             .collect()
     }
 
-    //ACL: Access with tokens
     pub fn contents(&self, token: &V::Credential) -> Vec<(I, Item<V::Acl, T>)> {
         let inner = self.inner.read().unwrap();
         inner
@@ -290,7 +314,6 @@ where
             .collect()
     }
 
-    //ACL: Access with tokens
     pub fn find<'a, K, Val, IT>(
         &self,
         matches: &'a IT,
@@ -311,9 +334,34 @@ where
             .map(|(&id, item)| (id, item.clone()))
     }
 
-    //ACL: Filtered subscription with tokens
-    pub fn monitor(&self) -> Receiver<RegistryChange<I, V::Acl, T>> {
-        self.monitor.subscribe()
+    pub fn monitor(&self, cred: V::Credential) -> RegistryMonitor<V, I, T> {
+        RegistryMonitor {
+            verifier: self.verifier.clone(),
+            recv: self.monitor.subscribe(),
+            cred: cred.clone(),
+        }
+    }
+}
+
+pub struct RegistryMonitor<V: Verifier, I, T> {
+    verifier: V,
+    recv: Receiver<RegistryChangeInternal<I, V::Acl, T>>,
+    cred: V::Credential,
+}
+
+impl<V, I, T> RegistryMonitor<V, I, T>
+where
+    I: Clone,
+    T: Clone,
+    V: Verifier,
+{
+    pub async fn recv(&mut self) -> Result<RegistryChange<I, V::Acl, T>, RecvError> {
+        loop {
+            let i = self.recv.recv().await?;
+            if self.verifier.verify(&self.cred, i.acl()) {
+                return Ok(i.into());
+            }
+        }
     }
 }
 

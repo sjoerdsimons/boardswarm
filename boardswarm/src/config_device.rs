@@ -216,9 +216,9 @@ impl Device {
             }
         }
 
-        let mut actuator_monitor = self.inner.server.inner.actuators.monitor();
-        let mut console_monitor = self.inner.server.inner.consoles.monitor();
-        let mut volume_monitor = self.inner.server.inner.volumes.monitor();
+        let mut actuator_monitor = self.inner.server.inner.actuators.monitor(());
+        let mut console_monitor = self.inner.server.inner.consoles.monitor(());
+        let mut volume_monitor = self.inner.server.inner.volumes.monitor(());
         let mut changed = false;
 
         for (id, item) in self.inner.server.inner.actuators.contents(&()) {

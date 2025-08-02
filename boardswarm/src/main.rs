@@ -682,15 +682,16 @@ impl boardswarm_protocol::boardswarm_server::Boardswarm for Server {
             .try_into()
             .map_err(|_e| tonic::Status::invalid_argument("Unknown item type "))?;
 
-        fn to_item_stream<V: Verifier, I, T>(
+        fn to_item_stream<V, I, T>(
             registry: &Registry<V, I, T>,
             token: &V::Credential,
         ) -> ItemMonitorStream
         where
             I: RegistryIndex + Into<u64> + Send + 'static,
             T: Clone + Send + 'static,
+            V: Verifier + Send + 'static,
         {
-            let monitor = registry.monitor();
+            let monitor = registry.monitor(token.clone());
             let initial = Ok(ItemEvent {
                 event: Some(Event::Add(to_item_list(registry, token))),
             });
