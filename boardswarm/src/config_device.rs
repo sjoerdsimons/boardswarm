@@ -216,12 +216,12 @@ impl Device {
             }
         }
 
-        let mut actuator_monitor = self.inner.server.inner.actuators.monitor(());
-        let mut console_monitor = self.inner.server.inner.consoles.monitor(());
-        let mut volume_monitor = self.inner.server.inner.volumes.monitor(());
+        let mut actuator_monitor = self.inner.server.inner.actuators.monitor_no_auth();
+        let mut console_monitor = self.inner.server.inner.consoles.monitor_no_auth();
+        let mut volume_monitor = self.inner.server.inner.volumes.monitor_no_auth();
         let mut changed = false;
 
-        for (id, item) in self.inner.server.inner.actuators.contents(&()) {
+        for (id, item) in self.inner.server.inner.actuators.contents_no_auth() {
             changed |= add_item(
                 self.inner.modes.iter().flat_map(|m| m.sequence.iter()),
                 id,
@@ -229,11 +229,11 @@ impl Device {
             );
         }
 
-        for (id, item) in self.inner.server.inner.consoles.contents(&()) {
+        for (id, item) in self.inner.server.inner.consoles.contents_no_auth() {
             changed |= add_item_with(self.inner.consoles.iter(), id, item, setup_console);
         }
 
-        for (id, item) in self.inner.server.inner.volumes.contents(&()) {
+        for (id, item) in self.inner.server.inner.volumes.contents_no_auth() {
             changed |= add_item(self.inner.volumes.iter(), id, item);
         }
 

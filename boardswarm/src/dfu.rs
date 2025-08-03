@@ -15,16 +15,12 @@ use tracing::instrument;
 use tracing::{info, warn};
 
 use crate::{
-    registry, udev::DeviceEvent, Server, Volume, VolumeError, VolumeTarget, VolumeTargetInfo,
+    provider::Provider, udev::DeviceEvent, Volume, VolumeError, VolumeTarget, VolumeTargetInfo,
 };
 pub const PROVIDER: &str = "dfu";
 
-#[instrument(skip(server))]
-pub async fn start_provider(name: String, server: Server) {
-    let provider_properties = &[
-        (registry::PROVIDER_NAME, name.as_str()),
-        (registry::PROVIDER, PROVIDER),
-    ];
+#[instrument(skip(provider))]
+pub async fn start_provider(provider: Provider) {
     let mut registrations = HashMap::new();
     let mut devices = crate::udev::DeviceStream::new("usb").unwrap();
     while let Some(d) = devices.next().await {
@@ -57,14 +53,14 @@ pub async fn start_provider(name: String, server: Server) {
                 };
 
                 let dfu = Dfu::new(busnum, devnum).await;
-                let mut properties = device.properties(name);
-                properties.extend(provider_properties);
-                let id = server.register_volume(properties, dfu);
+                let properties = device.properties(name);
+
+                let id = provider.register_volume(properties, dfu);
                 registrations.insert(device.syspath().to_path_buf(), id);
             }
             DeviceEvent::Remove(device) => {
                 if let Some(id) = registrations.remove(device.syspath()) {
-                    server.unregister_volume(id)
+                    provider.unregister_volume(id)
                 }
             }
         }

@@ -7,7 +7,7 @@ use std::{
     task::Poll,
 };
 
-use crate::{registry::Properties, ActuatorId, ConsoleId, Server, VolumeId};
+use crate::{provider::Provider, registry::Properties, ActuatorId, ConsoleId, VolumeId};
 use futures::{ready, Stream};
 use tokio_udev::{AsyncMonitorSocket, Enumerator};
 use tracing::{info, warn};
@@ -29,14 +29,14 @@ enum RegistrationState {
 
 #[derive(Clone)]
 pub struct DeviceRegistrations {
-    server: Server,
+    provider: Provider,
     registrations: Arc<Mutex<HashMap<PathBuf, RegistrationState>>>,
 }
 
 impl DeviceRegistrations {
-    pub fn new(server: Server) -> Self {
+    pub fn new(provider: Provider) -> Self {
         DeviceRegistrations {
-            server,
+            provider,
             registrations: Default::default(),
         }
     }
@@ -74,16 +74,16 @@ impl DeviceRegistrations {
     fn unregister(&self, registrations: Vec<Registration>) {
         for r in registrations {
             match r {
-                Registration::Actuator(id) => self.server.unregister_actuator(id),
-                Registration::Console(id) => self.server.unregister_console(id),
-                Registration::Volume(id) => self.server.unregister_volume(id),
+                Registration::Actuator(id) => self.provider.unregister_actuator(id),
+                Registration::Console(id) => self.provider.unregister_console(id),
+                Registration::Volume(id) => self.provider.unregister_volume(id),
             }
         }
     }
 }
 
 pub struct RegistrationGuard<'a> {
-    server: &'a Server,
+    provider: &'a Provider,
     registrations: Vec<Registration>,
 }
 
@@ -92,7 +92,7 @@ impl RegistrationGuard<'_> {
     where
         A: crate::Actuator + 'static,
     {
-        let id = self.server.register_actuator(properties, item);
+        let id = self.provider.register_actuator(properties, item);
         self.registrations.push(Registration::Actuator(id));
     }
 
@@ -100,7 +100,7 @@ impl RegistrationGuard<'_> {
     where
         C: crate::Console + 'static,
     {
-        let id = self.server.register_console(properties, item);
+        let id = self.provider.register_console(properties, item);
         self.registrations.push(Registration::Console(id));
     }
 
@@ -108,7 +108,7 @@ impl RegistrationGuard<'_> {
     where
         V: crate::Volume + 'static,
     {
-        let id = self.server.register_volume(properties, item);
+        let id = self.provider.register_volume(properties, item);
         self.registrations.push(Registration::Volume(id));
     }
 }
@@ -140,7 +140,7 @@ impl PreRegistration {
         match registrations.get(&self.syspath) {
             Some(RegistrationState::Pending(s)) if *s == self.seqnum => {
                 let mut guard = RegistrationGuard {
-                    server: &self.pending.server,
+                    provider: &self.pending.provider,
                     registrations: vec![],
                 };
 

@@ -15,11 +15,12 @@ use tonic::transport::Uri;
 use tracing::info;
 use tracing::warn;
 
+use crate::provider::Provider;
+use crate::registry::Properties;
 use crate::ActuatorId;
 use crate::ConsoleId;
 use crate::DeviceId;
 use crate::VolumeId;
-use crate::{registry::Properties, Server};
 
 use self::actuator::BoardswarmActuator;
 use self::console::BoardswarmConsole;
@@ -39,7 +40,7 @@ struct BoardswarmParameters {
     token: PathBuf,
 }
 
-pub struct Provider {
+pub struct BsProvider {
     /* Remote to local mappings */
     actuators: Mutex<HashMap<u64, ActuatorId>>,
     consoles: Mutex<HashMap<u64, ConsoleId>>,
@@ -48,7 +49,7 @@ pub struct Provider {
     notifier: broadcast::Sender<()>,
 }
 
-impl Provider {
+impl BsProvider {
     fn new() -> Self {
         let actuators = Mutex::new(HashMap::new());
         let consoles = Mutex::new(HashMap::new());
@@ -82,9 +83,9 @@ impl Provider {
 }
 
 async fn add_item(
-    provider: Arc<Provider>,
+    bsprovider: Arc<BsProvider>,
     type_: ItemType,
-    server: &Server,
+    provider: &Provider,
     mut remote: Boardswarm,
     id: u64,
     instance: &str,
@@ -95,24 +96,24 @@ async fn add_item(
 
     match type_ {
         ItemType::Console => {
-            let local = server.register_console(properties, BoardswarmConsole::new(id, remote));
-            provider.consoles.lock().unwrap().insert(id, local);
+            let local = provider.register_console(properties, BoardswarmConsole::new(id, remote));
+            bsprovider.consoles.lock().unwrap().insert(id, local);
         }
         ItemType::Actuator => {
-            let local = server.register_actuator(properties, BoardswarmActuator::new(id, remote));
-            provider.actuators.lock().unwrap().insert(id, local);
+            let local = provider.register_actuator(properties, BoardswarmActuator::new(id, remote));
+            bsprovider.actuators.lock().unwrap().insert(id, local);
         }
-        ItemType::Device => match BoardswarmDevice::new(id, remote, provider.clone()).await {
+        ItemType::Device => match BoardswarmDevice::new(id, remote, bsprovider.clone()).await {
             Ok(d) => {
-                let local = server.register_device(properties, d);
-                provider.devices.lock().unwrap().insert(id, local);
+                let local = provider.register_device(properties, d);
+                bsprovider.devices.lock().unwrap().insert(id, local);
             }
             Err(e) => warn!("Failed to montior remote device: {e}"),
         },
         ItemType::Volume => match BoardswarmVolume::new(id, remote.clone()).await {
             Ok(v) => {
-                let local = server.register_volume(properties, v);
-                provider.volumes.lock().unwrap().insert(id, local);
+                let local = provider.register_volume(properties, v);
+                bsprovider.volumes.lock().unwrap().insert(id, local);
             }
             Err(e) => warn!("Failed to setup remote volume: {e}"),
         },
@@ -120,42 +121,41 @@ async fn add_item(
     let _ = provider.notifier.send(());
 }
 
-fn remove_item(provider: &Provider, type_: ItemType, server: &Server, id: u64) {
+fn remove_item(bsprovider: &BsProvider, type_: ItemType, provider: &Provider, id: u64) {
     match type_ {
         ItemType::Console => {
-            let mut consoles = provider.consoles.lock().unwrap();
+            let mut consoles = bsprovider.consoles.lock().unwrap();
             if let Some(local) = consoles.remove(&id) {
-                server.unregister_console(local)
+                provider.unregister_console(local)
             }
         }
         ItemType::Actuator => {
-            let mut actuators = provider.actuators.lock().unwrap();
+            let mut actuators = bsprovider.actuators.lock().unwrap();
             if let Some(local) = actuators.remove(&id) {
-                server.unregister_actuator(local)
+                provider.unregister_actuator(local)
             }
         }
         ItemType::Device => {
-            let mut devices = provider.devices.lock().unwrap();
+            let mut devices = bsprovider.devices.lock().unwrap();
             if let Some(local) = devices.remove(&id) {
-                server.unregister_device(local)
+                provider.unregister_device(local)
             }
         }
         ItemType::Volume => {
-            let mut volumes = provider.volumes.lock().unwrap();
+            let mut volumes = bsprovider.volumes.lock().unwrap();
             if let Some(local) = volumes.remove(&id) {
-                server.unregister_volume(local)
+                provider.unregister_volume(local)
             }
         }
     }
-    let _ = provider.notifier.send(());
+    let _ = bsprovider.notifier.send(());
 }
 
 async fn monitor_items(
-    provider: Arc<Provider>,
+    bsprovider: Arc<BsProvider>,
     type_: ItemType,
     mut remote: Boardswarm,
-    server: Server,
-    instance: &str,
+    provider: Provider,
 ) {
     let monitor = remote.monitor(type_).await.unwrap();
     pin_mut!(monitor);
@@ -164,18 +164,18 @@ async fn monitor_items(
             ItemEvent::Added(items) => {
                 for i in items {
                     add_item(
-                        provider.clone(),
+                        bsprovider.clone(),
                         type_,
-                        &server,
+                        &provider,
                         remote.clone(),
                         i.id,
-                        instance,
+                        provider.name(),
                     )
                     .await
                 }
             }
             ItemEvent::Removed(removed) => {
-                remove_item(&provider, type_, &server, removed);
+                remove_item(&bsprovider, type_, &provider, removed);
             }
         }
     }
@@ -183,79 +183,76 @@ async fn monitor_items(
     // If the connection breaks; drop all registrations
     match type_ {
         ItemType::Console => {
-            for (_remote, local) in provider.consoles.lock().unwrap().drain() {
-                server.unregister_console(local);
+            for (_remote, local) in bsprovider.consoles.lock().unwrap().drain() {
+                provider.unregister_console(local);
             }
         }
         ItemType::Actuator => {
-            for (_remote, local) in provider.actuators.lock().unwrap().drain() {
-                server.unregister_actuator(local);
+            for (_remote, local) in bsprovider.actuators.lock().unwrap().drain() {
+                provider.unregister_actuator(local);
             }
         }
         ItemType::Device => {
-            for (_remote, local) in provider.devices.lock().unwrap().drain() {
-                server.unregister_device(local);
+            for (_remote, local) in bsprovider.devices.lock().unwrap().drain() {
+                provider.unregister_device(local);
             }
         }
         ItemType::Volume => {
-            for (_remote, local) in provider.volumes.lock().unwrap().drain() {
-                server.unregister_volume(local);
+            for (_remote, local) in bsprovider.volumes.lock().unwrap().drain() {
+                provider.unregister_volume(local);
             }
         }
     }
 }
 
-pub fn start_provider(name: String, parameters: serde_yaml::Value, server: Server) {
-    let provider = Arc::new(Provider::new());
-    let parameters: BoardswarmParameters = serde_yaml::from_value(parameters).unwrap();
+pub fn start_provider(provider: Provider) {
+    let bsprovider = Arc::new(BsProvider::new());
+    let parameters: BoardswarmParameters =
+        serde_yaml::from_value(provider.parameters().cloned().unwrap()).unwrap();
     let uri: Uri = parameters.uri.parse().unwrap();
 
     tokio::spawn(async move {
-        let token_path = server.config_dir().join(parameters.token);
+        let token_path = provider.server().config_dir().join(parameters.token);
         let token = match tokio::fs::read_to_string(token_path).await {
             Ok(token) => token.trim_end().to_string(),
             Err(e) => {
-                warn!("Failed to read token for {name}: {e}");
+                warn!("Failed to read token for {}: {}", provider.name(), e);
                 return;
             }
         };
         loop {
-            let _span = tracing::span!(tracing::Level::INFO, "boardswarm", name);
+            let _span = tracing::span!(tracing::Level::INFO, "boardswarm", "{}", provider.name());
             let mut boardswarm = BoardswarmBuilder::new(uri.clone());
             boardswarm.auth_static(&token);
             if let Ok(remote) = boardswarm.connect().await {
-                info!("Connected to {}", name);
+                info!("Connected to {}", provider.name());
                 let consoles = monitor_items(
-                    provider.clone(),
+                    bsprovider.clone(),
                     ItemType::Console,
                     remote.clone(),
-                    server.clone(),
-                    &name,
+                    provider.clone(),
                 );
                 let actuators = monitor_items(
-                    provider.clone(),
+                    bsprovider.clone(),
                     ItemType::Actuator,
                     remote.clone(),
-                    server.clone(),
-                    &name,
+                    provider.clone(),
                 );
                 let devices = monitor_items(
-                    provider.clone(),
+                    bsprovider.clone(),
                     ItemType::Device,
                     remote.clone(),
-                    server.clone(),
-                    &name,
+                    provider.clone(),
                 );
                 let volumes = monitor_items(
-                    provider.clone(),
+                    bsprovider.clone(),
                     ItemType::Volume,
                     remote,
-                    server.clone(),
-                    &name,
+                    provider.clone(),
                 );
 
                 join!(consoles, actuators, devices, volumes);
-                info!("Connection to {} failed", name);
+                info!("Connection to {} failed", provider.name());
             }
             // TODO move to exponential backoff
             tokio::time::sleep(Duration::from_secs(1)).await;

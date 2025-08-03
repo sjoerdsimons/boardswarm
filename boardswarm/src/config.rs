@@ -68,11 +68,20 @@ pub enum Scalar {
     String(String),
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct Provider {
     pub name: String,
     pub provider: String,
     pub parameters: Option<serde_yaml::Value>,
+    #[serde(default)]
+    pub acls: Vec<ProviderAcl>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ProviderAcl {
+    #[serde(rename = "match", default)]
+    pub match_: HashMap<String, String>,
+    pub roles: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

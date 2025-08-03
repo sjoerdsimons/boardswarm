@@ -6,11 +6,11 @@ use tokio_gpiod::{Chip, Lines};
 use tracing::instrument;
 use tracing::{debug, warn};
 
+use crate::provider::Provider;
 use crate::ActuatorId;
 use crate::{
     registry::{self, Properties},
     udev::DeviceEvent,
-    Server,
 };
 
 pub const PROVIDER: &str = "gpio";
@@ -39,13 +39,10 @@ impl GpioParameters {
     }
 }
 
-#[instrument(fields(name), skip_all, level = "error")]
-pub async fn start_provider(name: String, parameters: serde_yaml::Value, server: Server) {
-    let provider_properties = &[
-        (registry::PROVIDER_NAME, name.as_str()),
-        (registry::PROVIDER, PROVIDER),
-    ];
-    let parameters: GpioParameters = serde_yaml::from_value(parameters).unwrap();
+#[instrument(skip_all, level = "error")]
+pub async fn start_provider(provider: Provider) {
+    let parameters: GpioParameters =
+        serde_yaml::from_value(provider.parameters().cloned().unwrap()).unwrap();
     if parameters.match_.is_empty() {
         warn!("matches is empty - will match any gpio device");
     }
@@ -73,9 +70,8 @@ pub async fn start_provider(name: String, parameters: serde_yaml::Value, server:
                             continue;
                         }
 
-                        properties.extend(provider_properties);
                         if let Some(ids) =
-                            setup_gpio_chip(path.to_path_buf(), &parameters, properties, &server)
+                            setup_gpio_chip(path.to_path_buf(), &parameters, properties, &provider)
                                 .await
                         {
                             registration = Some((device.syspath().to_owned(), ids));
@@ -87,7 +83,7 @@ pub async fn start_provider(name: String, parameters: serde_yaml::Value, server:
                 if let Some((p, ids)) = registration.as_ref() {
                     if device.syspath() == p {
                         for i in ids {
-                            server.unregister_actuator(*i);
+                            provider.unregister_actuator(*i);
                         }
                         registration = None
                     }
@@ -101,7 +97,7 @@ async fn setup_gpio_chip(
     path: PathBuf,
     parameters: &GpioParameters,
     mut properties: Properties,
-    server: &Server,
+    provider: &Provider,
 ) -> Option<Vec<ActuatorId>> {
     let chip = match Chip::new(&path).await {
         Ok(chip) => chip,
@@ -116,7 +112,8 @@ async fn setup_gpio_chip(
 
     for line in parameters.lines_by_number() {
         let line_number = line.line_number.unwrap();
-        let id = setup_gpio_line(&chip, line_number, &line.name, properties.clone(), server).await;
+        let id =
+            setup_gpio_line(&chip, line_number, &line.name, properties.clone(), provider).await;
         ids.push(id);
     }
 
@@ -127,7 +124,7 @@ async fn setup_gpio_chip(
                 .lines_by_name()
                 .find(|l| l.line_name.as_deref().unwrap() == info.name)
             {
-                let id = setup_gpio_line(&chip, i, &line.name, properties.clone(), server).await;
+                let id = setup_gpio_line(&chip, i, &line.name, properties.clone(), provider).await;
                 ids.push(id);
             }
         }
@@ -140,7 +137,7 @@ async fn setup_gpio_line(
     line: tokio_gpiod::LineId,
     name: &str,
     mut properties: Properties,
-    server: &Server,
+    provider: &Provider,
 ) -> ActuatorId {
     let info = chip.line_info(line).await.unwrap();
     properties.insert(registry::NAME, name);
@@ -152,7 +149,7 @@ async fn setup_gpio_line(
         .drive(tokio_gpiod::Drive::PushPull)
         .consumer("boardswarm");
     let line = chip.request_lines(opts).await.unwrap();
-    server.register_actuator(properties, GpioLine { line })
+    provider.register_actuator(properties, GpioLine { line })
 }
 
 struct GpioLine {

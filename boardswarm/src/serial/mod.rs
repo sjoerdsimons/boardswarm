@@ -28,16 +28,16 @@ pub trait SerialProvider {
 }
 
 pub struct SerialDevices {
-    name: String,
-    server: Server,
+    provider: Provider,
+    //name: String,
+    //server: Server,
     providers: Arc<Mutex<Vec<Box<dyn SerialProvider>>>>,
 }
 
 impl SerialDevices {
-    pub fn new<S: Into<String>>(name: S, server: Server) -> Self {
+    pub fn new(provider: Provider) -> Self {
         Self {
-            name: name.into(),
-            server,
+            provider,
             providers: Default::default(),
         }
     }
@@ -49,10 +49,6 @@ impl SerialDevices {
 
     #[instrument(skip_all)]
     pub async fn start(self) {
-        let provider_properties = &[
-            (registry::PROVIDER_NAME, self.name.as_str()),
-            (registry::PROVIDER, PROVIDER),
-        ];
         let mut registrations = HashMap::new();
         let mut devices = crate::udev::DeviceStream::new("tty").unwrap();
         while let Some(event) = devices.next().await {
@@ -71,9 +67,8 @@ impl SerialDevices {
                             let name = name.to_string_lossy().into_owned();
                             let path = node.to_string_lossy().into_owned();
                             let console = SerialPort::new(path);
-                            let mut properties = device.properties(name);
-                            properties.extend(provider_properties);
-                            let id = self.server.register_console(properties, console);
+                            let properties = device.properties(name);
+                            let id = self.provider.register_console(properties, console);
                             registrations.insert(device.syspath().to_path_buf(), id);
                         }
                     }
@@ -82,7 +77,7 @@ impl SerialDevices {
                     let mut providers = self.providers.lock().unwrap();
                     providers.iter_mut().for_each(|p| p.remove(&device));
                     if let Some(id) = registrations.remove(device.syspath()) {
-                        self.server.unregister_console(id)
+                        self.provider.server().unregister_console(id)
                     }
                 }
             }
@@ -102,7 +97,7 @@ pub(crate) struct SerialPort {
     rate: Mutex<u32>,
     open: AsyncMutex<Option<SerialOpen>>,
 }
-use crate::{registry, udev::DeviceEvent, ConsoleError, Server};
+use crate::{provider::Provider, registry, udev::DeviceEvent, ConsoleError};
 
 impl SerialPort {
     pub fn new(path: String) -> Self {

@@ -9,17 +9,16 @@ use tokio::time::{timeout, Duration};
 use tokio_serial::{SerialPortBuilderExt, SerialStream};
 use tracing::{debug, error, info, instrument, trace, warn};
 
+use crate::provider::Provider;
 use crate::udev::{DeviceRegistrations, PreRegistration};
 use crate::{get_bit, ActuatorError};
 use crate::{
     registry::{self, Properties},
     serial::SerialProvider,
     udev::Device,
-    Server,
 };
 
 pub const PROVIDER: &str = "hifive-p550-mcu";
-
 const MCU_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 const MCU_PROMPT: &[u8] = b"#cmd:";
 
@@ -108,28 +107,23 @@ struct HifiveP550MCUParameters {
 }
 
 pub struct HifiveP550MCUProvider {
-    name: String,
     parameters: HifiveP550MCUParameters,
     registrations: DeviceRegistrations,
 }
 
 impl HifiveP550MCUProvider {
-    pub fn new(name: String, parameters: serde_yaml::Value, server: Server) -> Self {
-        let parameters: HifiveP550MCUParameters = serde_yaml::from_value(parameters).unwrap();
+    pub fn new(provider: Provider) -> Self {
+        let parameters: HifiveP550MCUParameters =
+            serde_yaml::from_value(provider.parameters().cloned().unwrap_or_default()).unwrap();
         Self {
-            name,
             parameters,
-            registrations: DeviceRegistrations::new(server),
+            registrations: DeviceRegistrations::new(provider),
         }
     }
 }
 
 impl SerialProvider for HifiveP550MCUProvider {
     fn handle(&mut self, device: &crate::udev::Device, seqnum: u64) -> bool {
-        let provider_properties = &[
-            (registry::PROVIDER_NAME, self.name.as_str()),
-            (registry::PROVIDER, PROVIDER),
-        ];
         if device.property_u64("ID_VENDOR_ID", 16) != Some(0x0403) {
             return false;
         };
@@ -138,7 +132,7 @@ impl SerialProvider for HifiveP550MCUProvider {
         };
         if let Some(node) = device.devnode() {
             if let Some(name) = node.file_name() {
-                let mut properties = device.properties(name.to_string_lossy());
+                let properties = device.properties(name.to_string_lossy());
                 if !properties.matches(&self.parameters.match_) {
                     debug!(
                         "Ignoring device {} - {:?}",
@@ -147,7 +141,6 @@ impl SerialProvider for HifiveP550MCUProvider {
                     );
                     return false;
                 }
-                properties.extend(provider_properties);
                 let prereg = self.registrations.pre_register(device, seqnum);
                 tokio::spawn(setup_hifive_p550_mcu(
                     prereg,

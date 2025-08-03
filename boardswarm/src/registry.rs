@@ -311,6 +311,15 @@ where
             .collect()
     }
 
+    pub fn contents_no_auth(&self) -> Vec<(I, Item<V::Acl, T>)> {
+        let inner = self.inner.read().unwrap();
+        inner
+            .contents
+            .iter()
+            .map(|(&id, item)| (id, item.clone()))
+            .collect()
+    }
+
     pub fn find<'a, K, Val, IT>(
         &self,
         matches: &'a IT,
@@ -338,6 +347,10 @@ where
             cred: cred.clone(),
         }
     }
+
+    pub fn monitor_no_auth(&self) -> RegistryMonitorNoAuth<V, I, T> {
+        RegistryMonitorNoAuth(self.monitor.subscribe())
+    }
 }
 
 pub struct RegistryMonitor<V: Verifier, I, T> {
@@ -359,6 +372,19 @@ where
                 return Ok(i.into());
             }
         }
+    }
+}
+
+pub struct RegistryMonitorNoAuth<V: Verifier, I, T>(Receiver<RegistryChangeInternal<I, V::Acl, T>>);
+
+impl<V, I, T> RegistryMonitorNoAuth<V, I, T>
+where
+    V: Verifier,
+    I: Clone,
+    T: Clone,
+{
+    pub async fn recv(&mut self) -> Result<RegistryChange<I, V::Acl, T>, RecvError> {
+        self.0.recv().await.map(Into::into)
     }
 }
 

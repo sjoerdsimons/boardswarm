@@ -7,38 +7,34 @@ use tokio_serial::SerialPortBuilderExt;
 use tracing::{info, instrument, warn};
 
 use crate::{
-    registry::{self, Properties},
+    provider::Provider,
+    registry::Properties,
     serial::SerialProvider,
     udev::{Device, DeviceRegistrations, PreRegistration},
-    Server, Volume, VolumeError, VolumeTarget, VolumeTargetInfo,
+    Volume, VolumeError, VolumeTarget, VolumeTargetInfo,
 };
 
 pub const PROVIDER: &str = "mediatek-brom";
 pub const TARGET: &str = "brom";
 
 pub struct MediatekBromProvider {
-    name: String,
     registrations: DeviceRegistrations,
 }
 
 impl MediatekBromProvider {
-    pub fn new(name: String, server: Server) -> Self {
+    pub fn new(provider: Provider) -> Self {
         Self {
-            name,
-            registrations: DeviceRegistrations::new(server),
+            registrations: DeviceRegistrations::new(provider),
         }
     }
 }
 
 impl SerialProvider for MediatekBromProvider {
     fn handle(&mut self, device: &crate::udev::Device, seqnum: u64) -> bool {
-        let provider_properties = &[
-            (registry::PROVIDER_NAME, self.name.as_str()),
-            (registry::PROVIDER, PROVIDER),
-        ];
         if device.property_u64("ID_VENDOR_ID", 16) != Some(0x0e8d) {
             return false;
         };
+
         if device.property_u64("ID_MODEL_ID", 16) != Some(0x0003) {
             return false;
         };
@@ -47,8 +43,7 @@ impl SerialProvider for MediatekBromProvider {
             if let Some(name) = node.file_name() {
                 let prereg = self.registrations.pre_register(device, seqnum);
 
-                let mut properties = device.properties(name.to_string_lossy());
-                properties.extend(provider_properties);
+                let properties = device.properties(name.to_string_lossy());
                 tokio::spawn(setup_volume(prereg, node.to_path_buf(), properties));
 
                 return true;

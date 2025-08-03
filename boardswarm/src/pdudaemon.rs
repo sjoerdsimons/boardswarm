@@ -5,6 +5,7 @@ use serde::Deserialize;
 use tracing::instrument;
 
 use crate::{
+    provider::Provider,
     registry::{self, Properties},
     ActuatorError, Server,
 };
@@ -30,45 +31,34 @@ struct PduDaemonParameters {
     pdus: Vec<Pdu>,
 }
 
-fn setup_actuator<D: Display>(
-    server: &Server,
-    daemon: &PduDaemon,
-    name: &str,
-    provider_properties: &[(&str, &str)],
-    pdu_name: &str,
-    port: D,
-) {
-    let name = format!("{}.{}.port-{}", name, pdu_name, port);
+fn setup_actuator<D: Display>(provider: &Provider, daemon: &PduDaemon, pdu_name: &str, port: D) {
+    let name = format!("{}.{}.port-{}", provider.name(), pdu_name, port);
     let port_name = port.to_string();
 
     let mut properties = Properties::new(name);
-    properties.extend(provider_properties);
     properties.insert("pdudaemon.pdu", pdu_name);
     properties.insert("pdudaemon.port", port_name.clone());
 
     let actuator = PduDaemonActuator::new(daemon.clone(), pdu_name.to_string(), port_name);
-    server.register_actuator(properties, actuator);
+    provider.register_actuator(properties, actuator);
 }
 
-#[instrument(skip(parameters, server))]
-pub fn start_provider(name: String, parameters: serde_yaml::Value, server: Server) {
-    let parameters: PduDaemonParameters = serde_yaml::from_value(parameters).unwrap();
-    let provider_properties = &[
-        (registry::PROVIDER_NAME, name.as_str()),
-        (registry::PROVIDER, PROVIDER),
-    ];
+#[instrument(skip_all)]
+pub fn start_provider(provider: Provider) {
+    let parameters: PduDaemonParameters =
+        serde_yaml::from_value(provider.parameters().cloned().unwrap()).unwrap();
 
     let daemon = PduDaemon::new(&parameters.uri).unwrap();
     for pdu in parameters.pdus {
         match pdu.ports {
             Ports::Num(ports) => {
                 for i in 1..=ports {
-                    setup_actuator(&server, &daemon, &name, provider_properties, &pdu.name, i);
+                    setup_actuator(&provider, &daemon, &pdu.name, i);
                 }
             }
             Ports::Ports(ports) => {
                 for i in ports {
-                    setup_actuator(&server, &daemon, &name, provider_properties, &pdu.name, i);
+                    setup_actuator(&provider, &daemon, &pdu.name, i);
                 }
             }
         }

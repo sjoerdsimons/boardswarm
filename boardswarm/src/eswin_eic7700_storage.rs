@@ -2,7 +2,9 @@ use bytes::Bytes;
 use proc_mounts::{MountInfo, MountIter};
 use serde::Deserialize;
 use std::{
+    borrow::Cow,
     collections::HashMap,
+    ffi::OsStr,
     io::SeekFrom,
     path::{Path, PathBuf},
     time::Duration,
@@ -12,9 +14,10 @@ use tokio_stream::StreamExt;
 use tracing::{debug, instrument, trace, warn};
 
 use crate::{
-    registry::{self, Properties},
+    provider::Provider,
+    registry::Properties,
     udev::{DeviceEvent, DeviceRegistrations, PreRegistration},
-    Server, Volume, VolumeError, VolumeTarget, VolumeTargetInfo,
+    Volume, VolumeError, VolumeTarget, VolumeTargetInfo,
 };
 
 pub const PROVIDER: &str = "eswin-eic7700-storage";
@@ -31,23 +34,25 @@ struct EswinEic7700StorageParameters {
     mountpoint: String,
 }
 
-#[instrument(skip(server, parameters))]
-pub async fn start_provider(name: String, parameters: Option<serde_yaml::Value>, server: Server) {
-    let registrations = DeviceRegistrations::new(server);
-    let provider_properties = &[
-        (registry::PROVIDER_NAME, name.as_str()),
-        (registry::PROVIDER, PROVIDER),
-    ];
+#[instrument(skip_all)]
+pub async fn start_provider(provider: Provider) {
     let mut devices = crate::udev::DeviceStream::new("block").unwrap();
-    let parameters: EswinEic7700StorageParameters = if let Some(parameters) = parameters {
-        serde_yaml::from_value(parameters).unwrap()
+    let parameters: EswinEic7700StorageParameters = if let Some(parameters) = provider.parameters()
+    {
+        serde_yaml::from_value(parameters.clone()).unwrap()
     } else {
         Default::default()
     };
+    let registrations = DeviceRegistrations::new(provider);
     while let Some(d) = devices.next().await {
         match d {
             DeviceEvent::Add { device, seqnum } => {
-                let mut properties = device.properties(&name);
+                let name = device
+                    .devnode()
+                    .and_then(|n| n.file_name())
+                    .map(OsStr::to_string_lossy)
+                    .unwrap_or(Cow::from("unknown"));
+                let properties = device.properties(name);
                 if !properties.matches(&parameters.match_) {
                     debug!(
                         "Ignoring device {} - {:?}",
@@ -56,8 +61,6 @@ pub async fn start_provider(name: String, parameters: Option<serde_yaml::Value>,
                     );
                     continue;
                 }
-                properties.extend(provider_properties);
-
                 let prereg = registrations.pre_register(&device, seqnum);
                 let mountpoint = parameters.mountpoint.clone();
                 tokio::spawn(async move {

@@ -6,8 +6,9 @@ use tower::{Layer, Service};
 use tower_oauth2_resource_server::{
     auth_resolver::KidAuthorizerResolver, server::OAuth2ResourceServer, tenant::TenantConfiguration,
 };
+use tracing::warn;
 
-use crate::config::Scalar;
+use crate::{config::Scalar, registry::Verifier};
 
 #[derive(Clone, Debug, Deserialize, Default)]
 pub struct Claims {
@@ -44,9 +45,34 @@ pub async fn setup_auth_layer(
     Ok(resource.build().await?)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Roles {
-    pub roles: Vec<String>,
+    pub roles: Arc<Vec<String>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RoleVerifier {
+    // When enforce is false, the allow if both the credentials and acl list are empty
+    // else reject
+    enforce: bool,
+}
+
+impl RoleVerifier {
+    pub fn new(enforce: bool) -> Self {
+        Self { enforce }
+    }
+}
+
+impl Verifier for RoleVerifier {
+    type Credential = Roles;
+    type Acl = Vec<String>;
+    fn verify(&self, cred: &Self::Credential, acl: &Self::Acl) -> bool {
+        if self.enforce && cred.roles.is_empty() && acl.is_empty() {
+            true
+        } else {
+            acl.iter().any(|role| cred.roles.iter().any(|r| r == role))
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -161,7 +187,9 @@ fn claims_to_roles(claims: &Claims, roles: &[crate::config::Role]) -> Roles {
             }
         })
         .collect();
-    Roles { roles }
+    Roles {
+        roles: Arc::new(roles),
+    }
 }
 
 #[cfg(test)]
@@ -268,7 +296,7 @@ mod test {
         )
         .unwrap();
         let roles = claims_to_roles(&claims, &config);
-        assert_eq!(roles.roles, &["test"])
+        assert_eq!(*roles.roles, &["test"])
     }
 
     #[test]

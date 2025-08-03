@@ -10,10 +10,11 @@ use tokio_stream::StreamExt;
 use tracing::{debug, warn};
 use tracing::{info, instrument};
 
+use crate::provider::Provider;
 use crate::{
-    registry::{self, Properties},
+    registry::Properties,
     udev::{DeviceEvent, DeviceRegistrations, PreRegistration, UsbInterface},
-    Server, Volume, VolumeError, VolumeTarget, VolumeTargetInfo,
+    Volume, VolumeError, VolumeTarget, VolumeTargetInfo,
 };
 
 pub const PROVIDER: &str = "fastboot";
@@ -34,19 +35,15 @@ struct FastbootParameters {
     stage: bool,
 }
 
-#[instrument(skip(server, parameters))]
-pub async fn start_provider(name: String, parameters: Option<serde_yaml::Value>, server: Server) {
-    let registrations = DeviceRegistrations::new(server);
-    let provider_properties = &[
-        (registry::PROVIDER_NAME, name.as_str()),
-        (registry::PROVIDER, PROVIDER),
-    ];
+#[instrument(skip_all)]
+pub async fn start_provider(provider: Provider) {
     let mut devices = crate::udev::DeviceStream::new("usb").unwrap();
-    let parameters: FastbootParameters = if let Some(parameters) = parameters {
-        serde_yaml::from_value(parameters).unwrap()
+    let parameters: FastbootParameters = if let Some(parameters) = provider.parameters() {
+        serde_yaml::from_value(parameters.clone()).unwrap()
     } else {
         Default::default()
     };
+    let registrations = DeviceRegistrations::new(provider);
     while let Some(d) = devices.next().await {
         match d {
             DeviceEvent::Add { device, seqnum } => {
@@ -78,7 +75,7 @@ pub async fn start_provider(name: String, parameters: Option<serde_yaml::Value>,
                 };
 
                 let name = format!("fastboot {}/{}", busnum, devnum);
-                let mut properties = device.properties(&name);
+                let properties = device.properties(&name);
                 if !properties.matches(&parameters.match_) {
                     debug!(
                         "Ignoring fastboot device {} - {:?}",
@@ -89,8 +86,6 @@ pub async fn start_provider(name: String, parameters: Option<serde_yaml::Value>,
                     continue;
                 }
                 info!("New fastboot volume on: {name}");
-                properties.extend(provider_properties);
-
                 let prereg = registrations.pre_register(&device, seqnum);
                 let known_targets = parameters.targets.clone();
                 tokio::spawn(async move {

@@ -10,7 +10,7 @@ use tracing::{trace, warn};
 
 use crate::{ConsoleId, DeviceMonitor, DeviceSetModeError, VolumeId};
 
-use super::Provider;
+use super::BsProvider;
 
 #[derive(Clone)]
 pub struct BoardswarmDevice {
@@ -24,7 +24,7 @@ struct BoardswarmDeviceInner {
     // Remote to local mapping
     console_mapping: HashMap<u64, ConsoleId>,
     volume_mapping: HashMap<u64, VolumeId>,
-    provider: Arc<Provider>,
+    bsprovider: Arc<BsProvider>,
     info: boardswarm_protocol::Device,
 }
 
@@ -32,14 +32,14 @@ impl BoardswarmDevice {
     pub async fn new(
         id: u64,
         mut remote: Boardswarm,
-        provider: Arc<Provider>,
+        bsprovider: Arc<BsProvider>,
     ) -> Result<Self, tonic::Status> {
         let mut stream = remote.device_info(id).await?;
         let Some(info) = stream.next().await.transpose()? else {
             return Err(tonic::Status::unavailable("Device not available"));
         };
 
-        let inner = Arc::new(Mutex::new(BoardswarmDeviceInner::new(info, provider)));
+        let inner = Arc::new(Mutex::new(BoardswarmDeviceInner::new(info, bsprovider)));
 
         let notifier = broadcast::channel(1).0;
         let s = Self {
@@ -56,11 +56,11 @@ impl BoardswarmDevice {
 }
 
 impl BoardswarmDeviceInner {
-    fn new(info: boardswarm_protocol::Device, provider: Arc<Provider>) -> Self {
+    fn new(info: boardswarm_protocol::Device, bsprovider: Arc<BsProvider>) -> Self {
         let mut inner = BoardswarmDeviceInner {
             console_mapping: HashMap::new(),
             volume_mapping: HashMap::new(),
-            provider,
+            bsprovider,
             info,
         };
         inner.update_mappings();
@@ -72,7 +72,7 @@ impl BoardswarmDeviceInner {
         self.console_mapping.clear();
         for c in &self.info.consoles {
             if let Some(remote) = c.id {
-                if let Some(local) = self.provider.console_id(remote) {
+                if let Some(local) = self.bsprovider.console_id(remote) {
                     self.console_mapping.insert(remote, local);
                 }
             }
@@ -81,27 +81,27 @@ impl BoardswarmDeviceInner {
         self.volume_mapping.clear();
         for c in &self.info.volumes {
             if let Some(remote) = c.id {
-                if let Some(local) = self.provider.volume_id(remote) {
+                if let Some(local) = self.bsprovider.volume_id(remote) {
                     self.volume_mapping.insert(remote, local);
                 }
             }
         }
     }
 
-    // Check if the remote id provider had relevant changes changing our mappings
-    fn provider_sync(&mut self) -> bool {
+    // Check if the remote id bsprovider had relevant changes changing our mappings
+    fn bsprovider_sync(&mut self) -> bool {
         let mut changed = false;
 
         for remote in self.info.consoles.iter().filter_map(|c| c.id) {
             let local = self.console_mapping.get(&remote).copied();
-            if self.provider.console_id(remote) != local {
+            if self.bsprovider.console_id(remote) != local {
                 changed = true
             }
         }
 
         for remote in self.info.volumes.iter().filter_map(|v| v.id) {
             let local = self.volume_mapping.get(&remote).copied();
-            if self.provider.volume_id(remote) != local {
+            if self.bsprovider.volume_id(remote) != local {
                 changed = true
             }
         }
@@ -124,7 +124,7 @@ async fn monitor_device(
     updates: impl Stream<Item = Result<boardswarm_protocol::Device, tonic::Status>>,
 ) {
     pin_mut!(updates);
-    let mut watch = device.inner.lock().unwrap().provider.watch();
+    let mut watch = device.inner.lock().unwrap().bsprovider.watch();
 
     loop {
         tokio::select! {
@@ -145,8 +145,8 @@ async fn monitor_device(
             }
             _ = watch.recv() => {
                 let mut inner = device.inner.lock().unwrap();
-                trace!("Provider mappings; syncing");
-                if inner.provider_sync() {
+                trace!("BsProvider mappings; syncing");
+                if inner.bsprovider_sync() {
                     let _ = device.notifier.send(());
                 }
             }
