@@ -325,6 +325,7 @@ where
             .collect()
     }
 
+    #[allow(dead_code)]
     pub fn find<'a, K, Val, IT>(
         &self,
         matches: &'a IT,

@@ -209,7 +209,7 @@ mod test {
         )
         .unwrap();
         let roles = claims_to_roles(&claims, &config);
-        assert_eq!(roles.roles, &["test"])
+        assert_eq!(roles.roles.as_slice(), &["test"])
     }
 
     #[test]
@@ -226,7 +226,7 @@ mod test {
         )
         .unwrap();
         let roles = claims_to_roles(&claims, &config);
-        assert_eq!(roles.roles, &["test"])
+        assert_eq!(roles.roles.as_slice(), &["test"])
     }
 
     #[test]
@@ -243,7 +243,7 @@ mod test {
         )
         .unwrap();
         let roles = claims_to_roles(&claims, &config);
-        assert_eq!(roles.roles, &["test"])
+        assert_eq!(roles.roles.as_slice(), &["test"])
     }
 
     #[test]
@@ -261,7 +261,7 @@ mod test {
         .unwrap();
         eprintln!("{:?}", config);
         let roles = claims_to_roles(&claims, &config);
-        assert_eq!(roles.roles, &["test"])
+        assert_eq!(roles.roles.as_slice(), &["test"])
     }
 
     #[test]
@@ -329,7 +329,7 @@ mod test {
         )
         .unwrap();
         let roles = claims_to_roles(&claims, &config);
-        assert_eq!(roles.roles, &["match-a-group"])
+        assert_eq!(roles.roles.as_slice(), &["match-a-group"])
     }
 
     #[test]
@@ -364,6 +364,6 @@ mod test {
         )
         .unwrap();
         let roles = claims_to_roles(&claims, &config);
-        assert_eq!(roles.roles, &["match-user", "match-a-group"])
+        assert_eq!(roles.roles.as_slice(), &["match-user", "match-a-group"])
     }
 }
