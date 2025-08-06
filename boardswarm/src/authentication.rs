@@ -46,7 +46,7 @@ pub async fn setup_auth_layer(
 
 #[derive(Clone, Debug, Default)]
 pub struct Roles {
-    pub roles: Arc<Vec<String>>,
+    pub roles: Arc<[String]>,
 }
 
 #[derive(Clone, Debug)]
@@ -176,7 +176,7 @@ fn claim_matches_role(role: &crate::config::Role, claims: &Claims) -> bool {
 }
 
 fn claims_to_roles(claims: &Claims, roles: &[crate::config::Role]) -> Roles {
-    let roles = roles
+    let roles: Vec<String> = roles
         .iter()
         .filter_map(|r| {
             if claim_matches_role(r, claims) {
@@ -187,7 +187,7 @@ fn claims_to_roles(claims: &Claims, roles: &[crate::config::Role]) -> Roles {
         })
         .collect();
     Roles {
-        roles: Arc::new(roles),
+        roles: roles.into(),
     }
 }
 
@@ -209,7 +209,7 @@ mod test {
         )
         .unwrap();
         let roles = claims_to_roles(&claims, &config);
-        assert_eq!(roles.roles.as_slice(), &["test"])
+        assert_eq!(&*roles.roles, &["test"])
     }
 
     #[test]
@@ -226,7 +226,7 @@ mod test {
         )
         .unwrap();
         let roles = claims_to_roles(&claims, &config);
-        assert_eq!(roles.roles.as_slice(), &["test"])
+        assert_eq!(&*roles.roles, &["test"])
     }
 
     #[test]
@@ -243,7 +243,7 @@ mod test {
         )
         .unwrap();
         let roles = claims_to_roles(&claims, &config);
-        assert_eq!(roles.roles.as_slice(), &["test"])
+        assert_eq!(&*roles.roles, &["test"])
     }
 
     #[test]
@@ -261,7 +261,7 @@ mod test {
         .unwrap();
         eprintln!("{:?}", config);
         let roles = claims_to_roles(&claims, &config);
-        assert_eq!(roles.roles.as_slice(), &["test"])
+        assert_eq!(&*roles.roles, &["test"])
     }
 
     #[test]
@@ -295,7 +295,7 @@ mod test {
         )
         .unwrap();
         let roles = claims_to_roles(&claims, &config);
-        assert_eq!(*roles.roles, &["test"])
+        assert_eq!(&*roles.roles, &["test"])
     }
 
     #[test]
@@ -329,7 +329,7 @@ mod test {
         )
         .unwrap();
         let roles = claims_to_roles(&claims, &config);
-        assert_eq!(roles.roles.as_slice(), &["match-a-group"])
+        assert_eq!(&*roles.roles, &["match-a-group"])
     }
 
     #[test]
@@ -364,6 +364,6 @@ mod test {
         )
         .unwrap();
         let roles = claims_to_roles(&claims, &config);
-        assert_eq!(roles.roles.as_slice(), &["match-user", "match-a-group"])
+        assert_eq!(&*roles.roles, &["match-user", "match-a-group"])
     }
 }
