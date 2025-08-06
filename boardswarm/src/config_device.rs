@@ -294,18 +294,21 @@ impl crate::Device for Device {
         }
 
         for step in &target.sequence {
-            let step = step.config();
-            if let Some(provider) = self.inner.server.find_actuator(&step.match_) {
-                provider
+            let config = step.config();
+            if let Some(actuator) = step
+                .get()
+                .and_then(|id| self.inner.server.get_actuator_no_auth(id))
+            {
+                actuator
                     .set_mode(Box::new(<dyn erased_serde::Deserializer>::erase(
-                        step.parameters.clone(),
+                        config.parameters.clone(),
                     )))
                     .await?;
             } else {
-                warn!("Provider {:?} not found", &step.match_);
+                warn!("Actuator {:?} not found", &config.match_);
                 return Err(ActuatorError {}.into());
             }
-            if let Some(duration) = step.stabilisation {
+            if let Some(duration) = config.stabilisation {
                 tokio::time::sleep(duration).await;
             }
         }

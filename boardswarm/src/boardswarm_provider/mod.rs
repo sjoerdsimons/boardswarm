@@ -118,7 +118,7 @@ async fn add_item(
             Err(e) => warn!("Failed to setup remote volume: {e}"),
         },
     }
-    let _ = provider.notifier.send(());
+    let _ = bsprovider.notifier.send(());
 }
 
 fn remove_item(bsprovider: &BsProvider, type_: ItemType, provider: &Provider, id: u64) {

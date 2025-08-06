@@ -270,6 +270,11 @@ where
         }
     }
 
+    pub fn lookup_no_auth(&self, id: I) -> Option<Item<V::Acl, T>> {
+        let inner = self.inner.read().unwrap();
+        inner.contents.get(&id).cloned()
+    }
+
     pub fn lookup(&self, id: I, cred: &V::Credential) -> Option<Item<V::Acl, T>> {
         let inner = self.inner.read().unwrap();
         let item = inner.contents.get(&id)?;

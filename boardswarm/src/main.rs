@@ -534,16 +534,11 @@ impl Server {
             .map(|item| item.into_inner())
     }
 
-    fn find_actuator<'a, K, V, I>(&self, matches: &'a I) -> Option<Arc<dyn Actuator>>
-    where
-        K: AsRef<str>,
-        V: AsRef<str>,
-        &'a I: IntoIterator<Item = (K, V)>,
-    {
+    fn get_actuator_no_auth(&self, id: ActuatorId) -> Option<Arc<dyn Actuator>> {
         self.inner
             .actuators
-            .find(matches, todo!())
-            .map(|(_, item)| item.into_inner())
+            .lookup_no_auth(id)
+            .map(|item| item.into_inner())
     }
 
     fn unregister_actuator(&self, id: ActuatorId) {
@@ -627,17 +622,17 @@ impl Server {
             */
     }
 
-    fn get_device(&self, id: u64) -> Option<Arc<dyn Device>> {
+    fn get_device(&self, id: u64, roles: &Roles) -> Option<Arc<dyn Device>> {
         self.inner
             .devices
-            .lookup(DeviceId(id), &())
+            .lookup(DeviceId(id), roles)
             .map(registry::Item::into_inner)
     }
 
     fn item_list_for(&self, type_: boardswarm_protocol::ItemType, roles: &Roles) -> ItemList {
         match type_ {
             boardswarm_protocol::ItemType::Actuator => to_item_list(&self.inner.actuators, roles),
-            boardswarm_protocol::ItemType::Device => to_item_list(&self.inner.devices, &()),
+            boardswarm_protocol::ItemType::Device => to_item_list(&self.inner.devices, roles),
             boardswarm_protocol::ItemType::Console => to_item_list(&self.inner.consoles, roles),
             boardswarm_protocol::ItemType::Volume => to_item_list(&self.inner.volumes, roles),
         }
@@ -751,7 +746,7 @@ impl boardswarm_protocol::boardswarm_server::Boardswarm for Server {
         }
         let response = match type_ {
             boardswarm_protocol::ItemType::Actuator => to_item_stream(&self.inner.actuators, roles),
-            boardswarm_protocol::ItemType::Device => to_item_stream(&self.inner.devices, &()),
+            boardswarm_protocol::ItemType::Device => to_item_stream(&self.inner.devices, roles),
             boardswarm_protocol::ItemType::Console => to_item_stream(&self.inner.consoles, roles),
             boardswarm_protocol::ItemType::Volume => to_item_stream(&self.inner.volumes, roles),
         };
@@ -781,7 +776,7 @@ impl boardswarm_protocol::boardswarm_server::Boardswarm for Server {
             boardswarm_protocol::ItemType::Device => self
                 .inner
                 .devices
-                .lookup(DeviceId(request.item), &())
+                .lookup(DeviceId(request.item), roles)
                 .ok_or_else(|| tonic::Status::not_found("Item not found"))?
                 .properties(),
             boardswarm_protocol::ItemType::Console => self
@@ -898,8 +893,12 @@ impl boardswarm_protocol::boardswarm_server::Boardswarm for Server {
         &self,
         request: tonic::Request<boardswarm_protocol::DeviceRequest>,
     ) -> Result<tonic::Response<Self::DeviceInfoStream>, tonic::Status> {
-        let request = request.into_inner();
-        if let Some(device) = self.get_device(request.device) {
+        let roles: &Roles = request
+            .extensions()
+            .get()
+            .ok_or_else(|| tonic::Status::internal("No roles"))?;
+        let request = request.get_ref();
+        if let Some(device) = self.get_device(request.device, roles) {
             let info = (&*device).into();
             let monitor = device.updates();
             let stream = Box::pin(stream::once(async move { Ok(info) }).chain(stream::unfold(
@@ -920,8 +919,12 @@ impl boardswarm_protocol::boardswarm_server::Boardswarm for Server {
         &self,
         request: tonic::Request<boardswarm_protocol::DeviceModeRequest>,
     ) -> Result<tonic::Response<()>, tonic::Status> {
-        let request = request.into_inner();
-        if let Some(device) = self.get_device(request.device) {
+        let roles: &Roles = request
+            .extensions()
+            .get()
+            .ok_or_else(|| tonic::Status::internal("No roles"))?;
+        let request = request.get_ref();
+        if let Some(device) = self.get_device(request.device, roles) {
             match device.set_mode(&request.mode).await {
                 Ok(()) => Ok(tonic::Response::new(())),
                 Err(DeviceSetModeError::ModeNotFound) => {
@@ -1171,9 +1174,10 @@ async fn main() -> anyhow::Result<()> {
             .to_path_buf(),
     );
     for d in config.devices {
+        let acl = d.acl.clone();
         let device = crate::config_device::Device::from_config(d, server.clone());
         let properties = Properties::new(device.name());
-        server.register_device(properties, todo!(), device);
+        server.register_device(properties, acl, device);
     }
 
     let local = tokio::task::LocalSet::new();

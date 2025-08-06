@@ -91,6 +91,8 @@ pub struct Device {
     pub modes: Vec<Mode>,
     #[serde(default)]
     pub volumes: Vec<Volume>,
+    #[serde(default)]
+    pub acl: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -6,7 +6,6 @@ use tower::{Layer, Service};
 use tower_oauth2_resource_server::{
     auth_resolver::KidAuthorizerResolver, server::OAuth2ResourceServer, tenant::TenantConfiguration,
 };
-use tracing::warn;
 
 use crate::{config::Scalar, registry::Verifier};
 
