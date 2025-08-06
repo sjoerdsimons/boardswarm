@@ -6,8 +6,8 @@ use tracing::instrument;
 
 use crate::{
     provider::Provider,
-    registry::{self, Properties},
-    ActuatorError, Server,
+    registry::{Properties},
+    ActuatorError,
 };
 
 pub const PROVIDER: &str = "pdudaemon";

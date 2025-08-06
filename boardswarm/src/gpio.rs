@@ -58,7 +58,7 @@ pub async fn start_provider(provider: Provider) {
                 if let Some(path) = device.devnode() {
                     if let Some(name) = path.file_name() {
                         let name = name.to_string_lossy().into_owned();
-                        let mut properties = device.properties(name);
+                        let properties = device.properties(name);
 
                         if !properties.matches(&parameters.match_) {
                             debug!(

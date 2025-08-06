@@ -97,7 +97,7 @@ pub(crate) struct SerialPort {
     rate: Mutex<u32>,
     open: AsyncMutex<Option<SerialOpen>>,
 }
-use crate::{provider::Provider, registry, udev::DeviceEvent, ConsoleError};
+use crate::{provider::Provider, udev::DeviceEvent, ConsoleError};
 
 impl SerialPort {
     pub fn new(path: String) -> Self {

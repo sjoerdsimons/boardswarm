@@ -1078,7 +1078,7 @@ impl boardswarm_protocol::boardswarm_server::Boardswarm for Server {
         let request = request.get_ref();
         let volume = VolumeId(request.volume);
         let volume = self
-            .get_volume(volume, &roles)
+            .get_volume(volume, roles)
             .ok_or_else(|| tonic::Status::not_found("Volume not found"))?;
         volume.erase(&request.target).await?;
         Ok(tonic::Response::new(()))
@@ -1095,7 +1095,7 @@ impl boardswarm_protocol::boardswarm_server::Boardswarm for Server {
         let request = request.get_ref();
         let volume = VolumeId(request.volume);
         let volume = self
-            .get_volume(volume, &roles)
+            .get_volume(volume, roles)
             .ok_or_else(|| tonic::Status::not_found("Volume not found"))?;
 
         let (target, exhaustive) = volume.targets();
