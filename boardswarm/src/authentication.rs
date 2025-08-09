@@ -2,12 +2,13 @@ use std::sync::Arc;
 
 use http::{Request, Response};
 use serde::Deserialize;
+use std::sync::Mutex;
 use tower::{Layer, Service};
 use tower_oauth2_resource_server::{
     auth_resolver::KidAuthorizerResolver, server::OAuth2ResourceServer, tenant::TenantConfiguration,
 };
 
-use crate::{config::Scalar, registry::Verifier};
+use crate::{config::Scalar, registry::Verifier, DeviceId};
 
 #[derive(Clone, Debug, Deserialize, Default)]
 pub struct Claims {
@@ -49,6 +50,12 @@ pub struct Roles {
     pub roles: Arc<[String]>,
 }
 
+impl Roles {
+    fn is_empty(&self) -> bool {
+        self.roles.is_empty()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct RoleVerifier {
     // When enforce is false, the allow if both the credentials and acl list are empty
@@ -66,10 +73,110 @@ impl Verifier for RoleVerifier {
     type Credential = Roles;
     type Acl = Vec<String>;
     fn verify(&self, cred: &Self::Credential, acl: &Self::Acl) -> bool {
-        if self.enforce && cred.roles.is_empty() && acl.is_empty() {
+        // If not strictly enforcing ACL only allow if neither the credentials have roles *and* the
+        // acl list is empty
+        if !self.enforce && cred.roles.is_empty() && acl.is_empty() {
             true
         } else {
             acl.iter().any(|role| cred.roles.iter().any(|r| r == role))
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum DeviceRoleCred {
+    Direct(Roles),
+    Device(Roles),
+}
+
+impl DeviceRoleCred {
+    fn roles(&self) -> &Roles {
+        match self {
+            DeviceRoleCred::Direct(roles) => roles,
+            DeviceRoleCred::Device(roles) => roles,
+        }
+    }
+}
+
+#[derive(Default)]
+struct DeviceRef {
+    refs: Vec<(DeviceId, Arc<[String]>)>,
+}
+
+#[derive(Clone)]
+pub struct DeviceRoleAcl {
+    direct: Vec<String>,
+    device: Arc<Mutex<DeviceRef>>,
+}
+
+impl From<Vec<String>> for DeviceRoleAcl {
+    fn from(value: Vec<String>) -> Self {
+        Self {
+            direct: value,
+            device: Arc::new(Mutex::new(Default::default())),
+        }
+    }
+}
+
+impl DeviceRoleAcl {
+    pub fn add_ref(&self, device: DeviceId, r: Arc<[String]>) {
+        self.device.lock().unwrap().refs.push((device, r));
+    }
+
+    pub fn drop_ref(&self, device: DeviceId) {
+        self.device
+            .lock()
+            .unwrap()
+            .refs
+            .retain(|(id, _)| *id != device);
+    }
+
+    // Check if roles should have direct access
+    fn verify_direct(&self, roles: &Roles) -> bool {
+        self.direct
+            .iter()
+            .any(|role| roles.roles.iter().any(|r| r == role))
+    }
+
+    // Check if roles can have either direct access or access via a device ref
+    fn verify_device(&self, roles: &Roles) -> bool {
+        // If there is direct access always allow
+        if self.verify_direct(roles) {
+            true
+        } else {
+            let refs = self.device.lock().unwrap();
+            refs.refs
+                .iter()
+                .any(|(_id, acl)| acl.iter().any(|role| roles.roles.iter().any(|r| r == role)))
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct DeviceRoleVerifier {
+    // When enforce is false, the allow if both the credentials and acl list are empty
+    // else reject
+    enforce: bool,
+}
+
+impl DeviceRoleVerifier {
+    pub fn new(enforce: bool) -> Self {
+        Self { enforce }
+    }
+}
+
+impl Verifier for DeviceRoleVerifier {
+    type Credential = DeviceRoleCred;
+    type Acl = DeviceRoleAcl;
+    fn verify(&self, cred: &Self::Credential, acl: &Self::Acl) -> bool {
+        // If not strictly enforcing ACLs, allow if there is no acl list for *direct* access and
+        // the users roles are empty
+        if !self.enforce && cred.roles().is_empty() && acl.direct.is_empty() {
+            return true;
+        }
+        match cred {
+            DeviceRoleCred::Direct(roles) => acl.verify_direct(roles),
+            DeviceRoleCred::Device(roles) => acl.verify_device(roles),
         }
     }
 }
