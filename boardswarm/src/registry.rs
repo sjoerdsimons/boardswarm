@@ -37,29 +37,24 @@ impl Properties {
         self.properties.get(prop).map(String::as_ref)
     }
 
+    pub fn contains_key(&self, prop: &str) -> bool {
+        self.properties.contains_key(prop)
+    }
+
     /// Tests if matches is a subset of the properties
-    ///
-    /// If properties is from a remote instance (`boardswarm.instance` is set) that has to be
-    /// explicitly matched otherwise it's a pure subset match (e.g. an empty set matches)
     pub fn matches<K, V, I>(&self, matches: I) -> bool
     where
         K: AsRef<str>,
         V: AsRef<str>,
         I: IntoIterator<Item = (K, V)>,
     {
-        let mut matched_instance = false;
-        let matched = matches.into_iter().all(|(k, v)| {
-            matched_instance |= k.as_ref() == INSTANCE;
+        matches.into_iter().all(|(k, v)| {
             if let Some(prop) = self.get(k.as_ref()) {
                 prop == v.as_ref()
             } else {
                 false
             }
-        });
-
-        // All the properties need to match and if the instance is declared in the properties that
-        // also needed to be matched against
-        matched && matched_instance == self.instance().is_some()
+        })
     }
 
     pub fn insert<K, V>(&mut self, key: K, value: V)

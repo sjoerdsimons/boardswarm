@@ -15,7 +15,7 @@ use futures::Sink;
 use hifive_p550_mcu::HifiveP550MCUProvider;
 use mediatek_brom::MediatekBromProvider;
 use provider::Provider;
-use registry::{Properties, Registry, RegistryIndex, Verifier};
+use registry::{Properties, Registry, RegistryIndex, Verifier, INSTANCE};
 use std::fmt::Display;
 use std::net::{AddrParseError, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -315,7 +315,13 @@ impl DeviceConfigItem for config::Console {
         if self.match_.is_empty() {
             warn!("Console matches is empty - will match any console");
         }
-        properties.matches(&self.match_)
+
+        // Device config items only match remote instances if it's explicitly in the matches
+        if self.match_.contains_key(INSTANCE) == properties.contains_key(INSTANCE) {
+            properties.matches(&self.match_)
+        } else {
+            false
+        }
     }
 }
 
@@ -325,7 +331,12 @@ impl DeviceConfigItem for config::Volume {
         if self.match_.is_empty() {
             warn!("Volume matches is empty - will match any volume");
         }
-        properties.matches(&self.match_)
+        // Device config items only match remote instances if it's explicitly in the matches
+        if self.match_.contains_key(INSTANCE) == properties.contains_key(INSTANCE) {
+            properties.matches(&self.match_)
+        } else {
+            false
+        }
     }
 }
 
@@ -335,7 +346,12 @@ impl DeviceConfigItem for config::ModeStep {
         if self.match_.is_empty() {
             warn!("ModeStep matches is empty - will match any device");
         }
-        properties.matches(&self.match_)
+        // Device config items only match remote instances if it's explicitly in the matches
+        if self.match_.contains_key(INSTANCE) == properties.contains_key(INSTANCE) {
+            properties.matches(&self.match_)
+        } else {
+            false
+        }
     }
 }
 
