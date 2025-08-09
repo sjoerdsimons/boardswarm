@@ -640,7 +640,7 @@ impl Server {
                     // Add a ref for any console in new but not in consoles
                     for c in new
                         .iter()
-                        .filter(|i| consoles.contains(i))
+                        .filter(|i| !consoles.contains(i))
                         .filter_map(|i| server.inner.consoles.lookup_no_auth(*i))
                     {
                         c.acl().add_ref(device, d.acl().clone().into());
@@ -649,7 +649,7 @@ impl Server {
                     // Drop a ref for any console in consoles but not in new
                     for c in consoles
                         .iter()
-                        .filter(|i| new.contains(i))
+                        .filter(|i| !new.contains(i))
                         .filter_map(|i| server.inner.consoles.lookup_no_auth(*i))
                     {
                         c.acl().drop_ref(device);
@@ -662,7 +662,7 @@ impl Server {
                     // Add a ref for any volume in new but not in volumes
                     for v in new
                         .iter()
-                        .filter(|i| volumes.contains(i))
+                        .filter(|i| !volumes.contains(i))
                         .filter_map(|i| server.inner.volumes.lookup_no_auth(*i))
                     {
                         v.acl().add_ref(device, d.acl().clone().into());
@@ -671,7 +671,7 @@ impl Server {
                     // Drop a ref for any volume in volumes but not in new
                     for v in volumes
                         .iter()
-                        .filter(|i| new.contains(i))
+                        .filter(|i| !new.contains(i))
                         .filter_map(|i| server.inner.volumes.lookup_no_auth(*i))
                     {
                         v.acl().drop_ref(device);

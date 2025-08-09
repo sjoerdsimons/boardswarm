@@ -83,7 +83,7 @@ impl Verifier for RoleVerifier {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum DeviceRoleCred {
     Direct(Roles),
     Device(Roles),
@@ -98,7 +98,7 @@ impl DeviceRoleCred {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct DeviceRef {
     refs: Vec<(DeviceId, Arc<[String]>)>,
 }
