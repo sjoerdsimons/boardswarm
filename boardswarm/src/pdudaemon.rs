@@ -4,11 +4,7 @@ use pdudaemon_client::PduDaemon;
 use serde::Deserialize;
 use tracing::instrument;
 
-use crate::{
-    provider::Provider,
-    registry::{Properties},
-    ActuatorError,
-};
+use crate::{provider::Provider, registry::Properties, ActuatorError};
 
 pub const PROVIDER: &str = "pdudaemon";
 
