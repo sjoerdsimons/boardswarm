@@ -1355,7 +1355,7 @@ async fn main() -> anyhow::Result<()> {
                 DeviceCommand::Mode(d) => {
                     device.change_mode(d.mode).await?;
                 }
-                DeviceCommand::Reset {} => {
+                DeviceCommand::Reset => {
                     println!("Turning off");
                     device.change_mode("off").await?;
                     println!("Turning on");
